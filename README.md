@@ -1,90 +1,158 @@
-# MuJoCo WASM Docker Setup
+# 🚀 MuJoCo WebSim: Massively Parallel RL in Your Browser
 
-This project provides a Docker-based environment for building and running [mujoco_wasm](https://github.com/zalo/mujoco_wasm) on Apple Silicon Macs by using an x86_64 container.
+## 🎯 The Vision
 
-## Quick Start
+**"What if you could run 1000 reinforcement learning environments on your laptop... in a browser tab?"**
 
-1. **Build and run the container:**
-   ```bash
-   docker-compose up --build
-   ```
+MuJoCo WebSim brings massively parallel physics simulation to the web, democratizing large-scale RL experimentation. No cloud setup. No infrastructure costs. Just open a browser and start training.
 
-2. **Access the MuJoCo WASM demo:**
-   Open your browser to [http://localhost:8080](http://localhost:8080)
+## 💡 Why This Matters
 
-## Available Commands
+Current RL research requires either:
+- 🖥️ Expensive cloud compute for parallel training
+- ⏰ Slow local training with limited parallelism  
+- 🔧 Complex distributed systems setup
 
-### Using Docker Compose (Recommended)
+**We're changing that.** With WebAssembly and Web Workers, we can run hundreds of MuJoCo physics simulations in parallel, right in your browser.
+
+### Key Innovations
+1. **Browser-Native Parallelism**: Leverage Web Workers for true parallel execution
+2. **Zero Infrastructure**: No Docker swarms, no Kubernetes, no cloud bills
+3. **Real-Time Visualization**: See what your agent is learning as it trains
+4. **Instant Sharing**: Send a URL to share your trained agent with anyone
+5. **Cross-Platform**: Works on any device with a modern browser
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────┐
+│          Browser Main Thread            │
+│  ┌─────────────┐  ┌──────────────┐    │
+│  │ Orchestrator │  │ Visualization │    │
+│  └─────────────┘  └──────────────┘    │
+└─────────────┬───────────────────────────┘
+              │
+    ┌─────────┴─────────┬─────────────┐
+    ▼                   ▼             ▼
+┌─────────┐      ┌─────────┐    ┌─────────┐
+│Worker 1 │      │Worker 2 │    │Worker N │
+│┌───────┐│      │┌───────┐│    │┌───────┐│
+││MuJoCo ││      ││MuJoCo ││    ││MuJoCo ││
+│└───────┘│      │└───────┘│    │└───────┘│
+│ Env 1-20│      │Env 21-40│    │   ...   │
+└─────────┘      └─────────┘    └─────────┘
+```
+
+## 📊 Current Status
+
+### ✅ Working
+- MuJoCo WASM compilation pipeline (x86_64 via Docker on Apple Silicon)
+- Multi-environment orchestration with Web Workers
+- Real-time visualization dashboard
+- Basic physics simulation (pendulum demo)
+
+### 🚧 In Progress
+- Integration of complex robot models (humanoid, ant, cheetah)
+- Performance optimization for 1000+ environments
+- RL policy integration
+- Environment randomization
+
+### 📈 Performance Targets
+- **Current**: 120 visual FPS with 12 environments
+- **Target**: 1000+ environments at 10,000+ physics steps/second
+- **Strategy**: Decouple physics from rendering, batch updates
+
+## 🎮 Use Cases
+
+1. **RL Education**: Students can experiment without cloud access
+2. **Rapid Prototyping**: Test reward functions and environment designs instantly
+3. **Interactive Demos**: Show off your trained agents with a shareable link
+4. **Curriculum Learning**: Dynamically adjust environment difficulty
+5. **Multi-Agent RL**: Run swarms of agents in the same browser
+
+## 🚀 Quick Start
+
 ```bash
-# Build and start the container with web server
-docker-compose up --build
+# Clone the repository
+git clone https://github.com/yourusername/mujoco-websim.git
+cd mujoco-websim
 
-# Run in detached mode
-docker-compose up -d
+# Build and run (requires Docker)
+docker-compose up --build -d
 
-# Stop the container
-docker-compose down
-
-# View logs
-docker-compose logs -f
-
-# Access container shell
-docker-compose exec mujoco-wasm bash
+# Open the demo
+open http://localhost:8080/workspace/multi-env-demo.html
 ```
 
-### Using Docker directly
+## 🛠️ Development Setup
+
+### Prerequisites
+- Docker (for building MuJoCo WASM)
+- Modern browser with Web Worker support
+- 8GB+ RAM recommended for 100+ environments
+
+### Building from Source
 ```bash
-# Build the image
-docker build --platform linux/amd64 -t mujoco-wasm .
+# The Docker container handles the complex WASM build
+docker-compose up --build -d
 
-# Run with build and serve
-docker run --platform linux/amd64 -p 8080:8080 mujoco-wasm
+# Watch the build logs
+docker logs -f mujoco-wasm-container
 
-# Just build without serving
-docker run --platform linux/amd64 mujoco-wasm build
-
-# Interactive shell
-docker run --platform linux/amd64 -it mujoco-wasm bash
+# Access the demos
+http://localhost:8080/workspace/multi-env-demo.html    # Mock physics demo
+http://localhost:8080/workspace/mujoco-simple-test.html # Real MuJoCo test
 ```
 
-## Architecture
+## 🎯 Hackathon Goals
 
-- **Base Image**: Ubuntu 22.04 x86_64
-- **Emscripten**: Version 3.1.55 (for WASM compilation)
-- **Web Server**: Nginx on port 8080
-- **Build System**: CMake with Emscripten toolchain
+### Phase 1: Core Demo (Day 1)
+- [ ] Fix robot model rendering (currently showing spheres)
+- [ ] Integrate real MuJoCo physics into parallel demo
+- [ ] Benchmark maximum environments on M1 MacBook Pro
 
-## Project Structure
-```
-.
-├── Dockerfile          # Multi-stage Docker build
-├── docker-compose.yml  # Docker Compose configuration
-├── docker-entrypoint.sh # Container entrypoint script
-├── workspace/          # Mounted volume for development
-└── README.md          # This file
-```
+### Phase 2: Scale & Performance (Day 2)  
+- [ ] Optimize for 1000+ environments
+- [ ] Add environment diversity and randomization
+- [ ] Implement basic RL policy (PPO or SAC)
+- [ ] Cloud deployment and scaling tests
 
-## Troubleshooting
+### Phase 3: Polish & Present (Day 3)
+- [ ] Create compelling visual demo
+- [ ] Add interactive controls (speed, env count, visualization options)
+- [ ] Performance comparison vs traditional approaches
+- [ ] Prepare 3-minute pitch
 
-### Apple Silicon Performance
-The container runs in x86_64 emulation mode on Apple Silicon, which may impact build performance. The compiled WASM files will run at native speed in your browser.
+## 🌟 Unique Value Proposition
 
-### Port Already in Use
-If port 8080 is already in use, modify the port mapping in `docker-compose.yml`:
-```yaml
-ports:
-  - "8081:8080"  # Change 8081 to your preferred port
-```
+**"The Jupyter Notebook of RL"** - Just as Jupyter democratized data science by making it interactive and shareable, MuJoCo WebSim democratizes RL research by making parallel simulation accessible to everyone.
 
-### Build Cache
-To force a complete rebuild:
-```bash
-docker-compose build --no-cache
-docker-compose up
-```
+No more:
+- 💸 $1000s in cloud bills
+- 🔧 Complex Docker/K8s setups  
+- ⏰ Waiting hours for single-threaded training
+- 🚫 "Works on my machine" problems
 
-## Next Steps
+Just:
+- 🌐 Open a browser
+- 🚀 Run hundreds of environments
+- 👀 Watch your agent learn
+- 🔗 Share with a URL
 
-1. **Multiple Environments**: Create additional HTML pages to run multiple MuJoCo simulations
-2. **RL Integration**: Add JavaScript code to load and run RL model inference
-3. **Custom Models**: Add your own MuJoCo XML models to the workspace directory
+## 🤝 Contributing
+
+We're looking for help with:
+- WebGL-based rendering optimizations
+- RL algorithm implementations
+- Environment variety (manipulation, locomotion, multi-agent)
+- Performance profiling and optimization
+
+## 📬 Contact
+
+- Hackathon Team: [your-email]
+- Project Lead: Aditya
+- GitHub: [your-github]
+
+---
+
+*Built with ❤️ at [Hackathon Name] 2025*
