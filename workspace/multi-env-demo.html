@@ -487,32 +487,30 @@
             // Set up performance chart
             uiControls.updatePerformanceChart();
             
-            // Add click handlers for environment canvases
+            // Handle clicks on environment canvases for 3D view
             document.addEventListener('click', async (e) => {
                 console.log('Click event:', e.target.tagName, e.target.id);
                 if (e.target.tagName === 'CANVAS' && e.target.id.startsWith('env-canvas-')) {
                     const envId = parseInt(e.target.id.replace('env-canvas-', ''));
                     console.log('Canvas clicked, env ID:', envId);
-                    console.log('openModal function available?', typeof window.openModal);
                     
-                    // Use the global openModal function
-                    if (window.openModal) {
-                        window.openModal(envId);
-                    } else {
-                        console.error('openModal function not found!');
+                    // Import and use the openEnvironment3D function
+                    try {
+                        const { openEnvironment3D } = await import('./threejs-modal.js');
+                        const state = window.mujocoOrchestrator?.getEnvironmentState(envId);
+                        await openEnvironment3D(envId, state);
+                    } catch (error) {
+                        console.error('Failed to open 3D view:', error);
                     }
                 }
             });
         });
         
-        // Initialize Three.js modal functions
-        window.threejsModal = {
-            close: async () => {
-                const { closeModal } = await import('./threejs-modal.js');
-                closeModal();
-            }
+        // Global close function for the modal X button
+        window.closeModal = async () => {
+            const { closeModal } = await import('./threejs-modal.js');
+            closeModal();
         };
     </script>
-    <script src="./threejs-modal-simple.js"></script>
 </body>
 </html>

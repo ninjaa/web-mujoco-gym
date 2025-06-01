@@ -44,6 +44,9 @@ export async function initEnvironments() {
         // Initialize orchestrator
         await state.orchestrator.initialize();
         
+        // Expose orchestrator to window for 3D modal
+        window.mujocoOrchestrator = state.orchestrator;
+        
         // Enable controls
         document.getElementById('runBtn').disabled = false;
         

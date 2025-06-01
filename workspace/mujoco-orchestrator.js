@@ -201,6 +201,24 @@ class MuJoCoRLOrchestrator {
         return this.episodeCount > 0 ? this.totalReward / this.stepCount : 0;
     }
     
+    getEnvironmentState(envId) {
+        const env = this.environments[envId];
+        if (!env) return null;
+        
+        return {
+            id: env.id,
+            observation: env.observation,
+            reward: env.reward,
+            done: env.done,
+            stepCount: env.stepCount,
+            position: env.observation && env.observation.bodyPos ? [
+                env.observation.bodyPos[0] || 0,
+                env.observation.bodyPos[1] || 0,
+                env.observation.bodyPos[2] || 0
+            ] : [0, 0, 0]
+        };
+    }
+    
     reset() {
         // Reset all environments
         for (const env of this.environments) {

@@ -1,11 +1,14 @@
 // Three.js Modal for 3D environment visualization
+// VERSION: 2024-06-01-00:08 - Added debug logging
 // For now, using vanilla Three.js without ES6 modules for simplicity
 let scene, camera, renderer, controls;
 let currentEnvId = null;
 let animationId = null;
 let robotGroup = null;
+let updateInterval = null;
 
 export async function openEnvironment3D(envId, state) {
+    console.log('openEnvironment3D called with envId:', envId, 'state:', state);
     currentEnvId = envId;
     
     // Show modal
@@ -20,10 +23,30 @@ export async function openEnvironment3D(envId, state) {
     
     // Initialize Three.js scene
     try {
+        console.log('About to initialize Three.js...');
         await initThreeJS();
+        console.log('Three.js initialized successfully');
         
         // Start render loop
         animate(state);
+        
+        // Start updating state from orchestrator
+        console.log('Setting up update interval for env', envId);
+        updateInterval = setInterval(async () => {
+            console.log('Update interval tick - checking orchestrator...');
+            if (window.mujocoOrchestrator) {
+                console.log('Orchestrator found, getting state for env', envId);
+                const newState = window.mujocoOrchestrator.getEnvironmentState(envId);
+                console.log('Got state:', newState);
+                if (newState) {
+                    updateRobotPose(newState);
+                } else {
+                    console.log('No state returned for env', envId);
+                }
+            } else {
+                console.log('No orchestrator found on window!');
+            }
+        }, 50); // Update at 20Hz
     } catch (error) {
         console.error('Failed to initialize Three.js:', error);
         alert('Failed to initialize 3D view. Check console for details.');
@@ -266,6 +289,43 @@ function createHumanoidRobot() {
     scene.add(robotGroup);
 }
 
+function updateRobotPose(state) {
+    console.log('updateRobotPose called with state:', state);
+    if (!robotGroup || !state || !state.observation) {
+        console.log('Early return - missing:', {robotGroup: !!robotGroup, state: !!state, observation: !!(state?.observation)});
+        return;
+    }
+    
+    // Update robot position from physics
+    if (state.observation.bodyPos) {
+        // MuJoCo uses Z-up, Three.js uses Y-up
+        // So MuJoCo's Z becomes Three.js Y, and MuJoCo's Y becomes Three.js -Z
+        const x = state.observation.bodyPos[0] || 0;
+        const y = state.observation.bodyPos[2] || 0; // Z -> Y
+        const z = -(state.observation.bodyPos[1] || 0); // Y -> -Z
+        
+        // Debug log every 20 updates (1 second)
+        if (Math.random() < 0.05) {
+            console.log('3D Update - MuJoCo pos:', state.observation.bodyPos, '-> Three.js pos:', {x, y, z});
+        }
+        
+        robotGroup.position.set(x, y, z);
+    }
+    
+    // Check if robot has fallen (torso height < 0.1m in MuJoCo coordinates)
+    const torsoHeight = state.observation.bodyPos ? state.observation.bodyPos[2] : 1.282;
+    if (torsoHeight < 0.1) {
+        // Robot has fallen - lay it on the ground
+        robotGroup.rotation.x = Math.PI / 2; // Rotate to lying position
+        robotGroup.position.y = Math.max(0.1, robotGroup.position.y); // Keep above ground
+    } else {
+        // Robot is standing
+        robotGroup.rotation.x = 0;
+    }
+    
+    // TODO: Update individual joint rotations from qpos data
+}
+
 function animate(state) {
     animationId = requestAnimationFrame(() => animate(state));
     
@@ -274,15 +334,7 @@ function animate(state) {
         controls.update();
     }
     
-    // TODO: Update robot pose from MuJoCo data
-    // For now, gentle idle animation
-    if (robotGroup) {
-        robotGroup.rotation.y += 0.005;
-        
-        // Subtle breathing motion
-        const breathScale = 1 + Math.sin(Date.now() * 0.001) * 0.02;
-        robotGroup.scale.y = breathScale;
-    }
+    // No more fake rotation - pose is updated by updateRobotPose()
     
     // Render
     if (renderer && scene && camera) {
@@ -312,6 +364,11 @@ export function closeModal() {
     if (animationId) {
         cancelAnimationFrame(animationId);
         animationId = null;
+    }
+    
+    if (updateInterval) {
+        clearInterval(updateInterval);
+        updateInterval = null;
     }
     
     // Clean up Three.js resources
