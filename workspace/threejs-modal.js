@@ -11,6 +11,7 @@ let animationId = null;
 let robotGroup = null;
 let updateInterval = null;
 let modelData = null;
+let resizeHandler = null;
 
 // Make THREE available globally for debugging
 window.THREE = THREE;
@@ -46,6 +47,19 @@ function createThreeMaterial(mjMaterial) {
 
 export async function openEnvironment3D(envId, state) {
   console.log("openEnvironment3D called with envId:", envId, "state:", state);
+
+  // Clean up any existing animation/render state before starting
+  if (animationId) {
+    console.log("⚠️ Found existing animationId:", animationId, "- cleaning up first");
+    cancelAnimationFrame(animationId);
+    animationId = null;
+  }
+  
+  if (updateInterval) {
+    console.log("⚠️ Found existing updateInterval - cleaning up first");
+    clearInterval(updateInterval);
+    updateInterval = null;
+  }
 
   try {
     console.log("Starting function...");
@@ -122,6 +136,8 @@ export async function openEnvironment3D(envId, state) {
           }
         }
       }, 50); // Update at 20Hz
+      
+      console.log("✅ Everything initialized. animationId:", animationId, "updateInterval:", updateInterval);
     } catch (error) {
       console.error("Failed somewhere in initialization:", error);
       console.error("Error stack:", error.stack);
@@ -140,6 +156,12 @@ async function initThreeJS(state) {
 
   // Get container
   const container = document.getElementById("threejs-container");
+  
+  // Clear any existing canvas elements first
+  while (container.firstChild) {
+    container.removeChild(container.firstChild);
+  }
+  
   const width = container.clientWidth;
   const height = container.clientHeight;
 
@@ -230,8 +252,9 @@ async function initThreeJS(state) {
     spotLight.target = robotGroup;
   }
 
-  // Handle window resize
-  window.addEventListener("resize", onWindowResize);
+  // Handle window resize - store the handler so we can remove it later
+  resizeHandler = onWindowResize;
+  window.addEventListener("resize", resizeHandler);
 }
 
 function loadThreeJS() {
@@ -590,6 +613,11 @@ function updateRobotPose(state) {
 }
 
 function animate(state) {
+  // Cancel any existing animation frame first
+  if (animationId) {
+    cancelAnimationFrame(animationId);
+  }
+  
   animationId = requestAnimationFrame(() => animate(state));
 
   // Update controls
@@ -624,6 +652,8 @@ function onWindowResize() {
 
 // Clean up when modal closes
 export function closeModal() {
+  console.log("closeModal called. animationId:", animationId, "updateInterval:", updateInterval);
+  
   if (animationId) {
     cancelAnimationFrame(animationId);
     animationId = null;
@@ -656,13 +686,27 @@ export function closeModal() {
   }
 
   camera = null;
-  controls = null;
+  
+  // Dispose of controls properly
+  if (controls) {
+    controls.dispose();
+    controls = null;
+  }
+  
   robotGroup = null;
   currentEnvId = null;
   
   // Reset modelData so it reloads fresh each time
   modelData = null;
+  
+  // Remove window resize handler
+  if (resizeHandler) {
+    window.removeEventListener("resize", resizeHandler);
+    resizeHandler = null;
+  }
 
   // Hide modal
   document.getElementById("threejs-modal").classList.add("hidden");
+  
+  console.log("✅ Modal cleanup complete");
 }
