@@ -56,10 +56,22 @@ server {
     root /app/mujoco_wasm;
     index index.html;
     
-    # Serve workspace files
+    # Serve workspace files with proper headers
     location /workspace/ {
         alias /app/workspace/;
         try_files \$uri \$uri/ =404;
+        
+        # Handle JS files in workspace specifically
+        location ~ \.js$ {
+            add_header Content-Type application/javascript;
+            add_header Access-Control-Allow-Origin * always;
+        }
+        
+        # Handle WASM files in workspace specifically  
+        location ~ \.wasm$ {
+            add_header Content-Type application/wasm;
+            add_header Access-Control-Allow-Origin * always;
+        }
     }
     
     # Serve mujoco_wasm files from root
@@ -72,13 +84,13 @@ server {
         add_header Access-Control-Allow-Origin * always;
     }
     
-    # Proper MIME types for WASM files
+    # Proper MIME types for WASM files in root
     location ~ \.wasm$ {
         add_header Content-Type application/wasm;
         add_header Access-Control-Allow-Origin * always;
     }
     
-    # Proper MIME types for JavaScript files
+    # Proper MIME types for JavaScript files in root
     location ~ \.js$ {
         add_header Content-Type application/javascript;
         add_header Access-Control-Allow-Origin * always;

@@ -287,91 +287,195 @@
             timestamps: []
         };
         
-        // Mock the RL orchestrator for demo purposes
-        class DemoRLOrchestrator {
+        // Logging function
+        function log(message, type = 'info') {
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+        
+        // Real MuJoCo RL orchestrator using Web Workers
+        class MuJoCoRLOrchestrator {
             constructor(numEnvironments, numWorkers) {
                 this.numEnvironments = numEnvironments;
                 this.numWorkers = numWorkers;
+                this.workers = [];
                 this.environments = [];
-                this.lastFrameTime = performance.now();
-                this.frameCount = 0;
-            }
-            
-            async initialize() {
-                // Simulate initialization
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                this.environmentType = 'ant'; // default
+                this.isInitialized = false;
+                this.pendingCallbacks = new Map();
                 
-                // Create mock environments
-                for (let i = 0; i < this.numEnvironments; i++) {
+                // Create environments
+                for (let i = 0; i < numEnvironments; i++) {
                     this.environments.push({
                         id: i,
-                        status: 'ready',
+                        workerId: i % numWorkers,
+                        state: 'idle',
+                        observation: null,
                         reward: 0,
-                        steps: 0,
-                        position: { x: 0, y: 0 },
-                        velocity: { x: 0, y: 0 }
+                        totalReward: 0,
+                        stepCount: 0
                     });
                 }
             }
             
+            async initialize(envType = 'ant') {
+                this.environmentType = envType;
+                
+                // Create workers
+                for (let i = 0; i < this.numWorkers; i++) {
+                    const worker = new Worker('/workspace/mujoco-rl-worker.js', { type: 'module' });
+                    
+                    worker.onmessage = (e) => {
+                        this.handleWorkerMessage(i, e.data);
+                    };
+                    
+                    worker.onerror = (error) => {
+                        console.error(`Worker ${i} error:`, error);
+                        log(`Worker ${i} error: ${error.message}`, 'error');
+                    };
+                    
+                    this.workers.push(worker);
+                }
+                
+                // Initialize environments in workers
+                const initPromises = this.environments.map(env => {
+                    return new Promise((resolve, reject) => {
+                        const callbackId = `init_${env.id}`;
+                        this.pendingCallbacks.set(callbackId, { resolve, reject });
+                        
+                        this.workers[env.workerId].postMessage({
+                            type: 'init',
+                            data: {
+                                envId: env.id,
+                                envType: this.environmentType
+                            }
+                        });
+                    });
+                });
+                
+                try {
+                    await Promise.all(initPromises);
+                    this.isInitialized = true;
+                    log(`Initialized ${this.numEnvironments} ${this.environmentType} environments`, 'success');
+                } catch (error) {
+                    console.error('Failed to initialize environments:', error);
+                    throw error;
+                }
+            }
+            
+            handleWorkerMessage(workerId, message) {
+                const { type, data } = message;
+                
+                switch (type) {
+                    case 'initialized':
+                        const initCallback = this.pendingCallbacks.get(`init_${data.envId}`);
+                        if (initCallback) {
+                            this.pendingCallbacks.delete(`init_${data.envId}`);
+                            if (data.success) {
+                                this.environments[data.envId].state = 'ready';
+                                initCallback.resolve();
+                            } else {
+                                initCallback.reject(new Error('Initialization failed'));
+                            }
+                        }
+                        break;
+                        
+                    case 'step':
+                        const env = this.environments[data.envId];
+                        if (env) {
+                            env.observation = data.observation;
+                            env.reward = data.reward;
+                            env.totalReward = data.info.totalReward;
+                            env.stepCount = data.info.stepCount;
+                            
+                            if (data.done) {
+                                // Reset environment automatically
+                                this.workers[env.workerId].postMessage({
+                                    type: 'reset',
+                                    data: { envId: env.id }
+                                });
+                            }
+                        }
+                        break;
+                        
+                    case 'reset':
+                        const resetEnv = this.environments[data.envId];
+                        if (resetEnv) {
+                            resetEnv.observation = data.observation;
+                            resetEnv.reward = 0;
+                            resetEnv.totalReward = 0;
+                            resetEnv.stepCount = 0;
+                        }
+                        break;
+                        
+                    case 'error':
+                        console.error(`Environment ${data.envId} error:`, data.error);
+                        log(`Env ${data.envId} error: ${data.error}`, 'error');
+                        break;
+                }
+            }
+            
             async runStep() {
-                // Simulate physics step
-                for (let env of this.environments) {
-                    // Random walk for demo
-                    env.velocity.x += (Math.random() - 0.5) * 0.1;
-                    env.velocity.y += (Math.random() - 0.5) * 0.1;
-                    
-                    // Apply velocity
-                    env.position.x += env.velocity.x;
-                    env.position.y += env.velocity.y;
-                    
-                    // Calculate reward (distance from origin)
-                    const distance = Math.sqrt(env.position.x ** 2 + env.position.y ** 2);
-                    env.reward = -distance;
-                    
-                    env.steps++;
-                    
-                    // Reset if too far
-                    if (distance > 10) {
-                        env.position = { x: 0, y: 0 };
-                        env.velocity = { x: 0, y: 0 };
+                if (!this.isInitialized) return;
+                
+                // Send step command to all environments
+                this.environments.forEach(env => {
+                    if (env.state === 'ready') {
+                        // Generate random actions based on environment type
+                        let numActions = 4; // default
+                        if (this.environmentType === 'humanoid') {
+                            numActions = 21; // humanoid has 21 actuators
+                        } else if (this.environmentType === 'ant') {
+                            numActions = 8;
+                        } else if (this.environmentType === 'cheetah') {
+                            numActions = 6;
+                        } else if (this.environmentType === 'pendulum') {
+                            numActions = 1;
+                        }
+                        
+                        const actions = Array(numActions).fill(0).map(() => (Math.random() - 0.5) * 0.2);
+                        
+                        this.workers[env.workerId].postMessage({
+                            type: 'step',
+                            data: {
+                                envId: env.id,
+                                actions: actions
+                            }
+                        });
                     }
-                }
+                });
                 
-                // Calculate FPS
-                this.frameCount++;
-                const now = performance.now();
-                const delta = now - this.lastFrameTime;
-                
-                if (delta > 1000) {
-                    const fps = (this.frameCount * 1000) / delta;
-                    document.getElementById('fps').textContent = fps.toFixed(1);
-                    this.frameCount = 0;
-                    this.lastFrameTime = now;
-                    return fps;
-                }
-                
-                return null;
+                // Return current states for visualization
+                return this.environments.map(env => ({
+                    id: env.id,
+                    position: env.observation ? env.observation.position : [0, 0, 0],
+                    reward: env.reward,
+                    totalReward: env.totalReward,
+                    stepCount: env.stepCount
+                }));
             }
             
             getAverageReward() {
-                const sum = this.environments.reduce((acc, env) => acc + env.reward, 0);
-                return sum / this.environments.length;
+                const totalReward = this.environments.reduce((sum, env) => sum + env.totalReward, 0);
+                return totalReward / this.environments.length;
             }
             
             reset() {
-                for (let env of this.environments) {
-                    env.position = { x: 0, y: 0 };
-                    env.velocity = { x: 0, y: 0 };
+                this.environments.forEach(env => {
+                    this.workers[env.workerId].postMessage({
+                        type: 'reset',
+                        data: { envId: env.id }
+                    });
                     env.reward = 0;
-                    env.steps = 0;
-                }
+                    env.totalReward = 0;
+                    env.stepCount = 0;
+                });
             }
         }
         
         async function initializeEnvironments() {
             const numEnvs = parseInt(document.getElementById('numEnvs').value);
             const numWorkers = parseInt(document.getElementById('numWorkers').value);
+            const sceneType = document.getElementById('sceneSelect').value;
             
             // Show loading
             document.getElementById('loadingScreen').classList.remove('hidden');
@@ -381,8 +485,8 @@
             
             try {
                 // Create orchestrator
-                orchestrator = new DemoRLOrchestrator(numEnvs, numWorkers);
-                await orchestrator.initialize();
+                orchestrator = new MuJoCoRLOrchestrator(numEnvs, numWorkers);
+                await orchestrator.initialize(sceneType);
                 
                 // Create environment UI
                 createEnvironmentUI(numEnvs);
@@ -427,7 +531,7 @@
                             <span class="metric-label">Steps</span>
                         </div>
                         <div class="metric">
-                            <span class="metric-value" id="pos-${i}">(0,0)</span>
+                            <span class="metric-value" id="pos-${i}">(0,0,0)</span>
                             <span class="metric-label">Position</span>
                         </div>
                     </div>
@@ -457,22 +561,19 @@
                 if (!isRunning) return;
                 
                 // Step simulation
-                const fps = await orchestrator.runStep();
+                const states = await orchestrator.runStep();
                 
                 // Update visualizations
-                updateEnvironmentVisuals();
+                updateEnvironmentVisuals(states);
                 
                 // Update average reward
                 const avgReward = orchestrator.getAverageReward();
                 document.getElementById('avgReward').textContent = avgReward.toFixed(2);
                 
                 // Record performance data
-                if (fps !== null) {
-                    performanceData.fps.push(fps);
-                    performanceData.rewards.push(avgReward);
-                    performanceData.timestamps.push(Date.now());
-                    updatePerformanceChart();
-                }
+                performanceData.rewards.push(avgReward);
+                performanceData.timestamps.push(Date.now());
+                updatePerformanceChart();
                 
                 // Continue animation
                 requestAnimationFrame(animate);
@@ -481,23 +582,23 @@
             animate();
         }
         
-        function updateEnvironmentVisuals() {
-            for (let i = 0; i < orchestrator.environments.length; i++) {
-                const env = orchestrator.environments[i];
+        function updateEnvironmentVisuals(states) {
+            states.forEach(state => {
+                const envId = state.id;
                 
                 // Update status
-                const statusEl = document.getElementById(`status-${i}`);
+                const statusEl = document.getElementById(`status-${envId}`);
                 statusEl.textContent = 'Active';
                 statusEl.classList.add('active');
                 
                 // Update metrics
-                document.getElementById(`reward-${i}`).textContent = env.reward.toFixed(2);
-                document.getElementById(`steps-${i}`).textContent = env.steps;
-                document.getElementById(`pos-${i}`).textContent = 
-                    `(${env.position.x.toFixed(1)},${env.position.y.toFixed(1)})`;
+                document.getElementById(`reward-${envId}`).textContent = state.reward.toFixed(2);
+                document.getElementById(`steps-${envId}`).textContent = state.stepCount;
+                document.getElementById(`pos-${envId}`).textContent = 
+                    `(${state.position[0].toFixed(1)},${state.position[1].toFixed(1)},${state.position[2].toFixed(1)})`;
                 
                 // Draw on canvas
-                const canvas = document.getElementById(`env-canvas-${i}`);
+                const canvas = document.getElementById(`env-canvas-${envId}`);
                 const ctx = canvas.getContext('2d');
                 
                 // Clear canvas
@@ -523,22 +624,14 @@
                 // Draw agent
                 const centerX = canvas.width / 2;
                 const centerY = canvas.height / 2;
-                const agentX = centerX + env.position.x * 20;
-                const agentY = centerY + env.position.y * 20;
+                const agentX = centerX + state.position[0] * 20;
+                const agentY = centerY + state.position[1] * 20;
                 
                 ctx.fillStyle = '#4a9eff';
                 ctx.beginPath();
                 ctx.arc(agentX, agentY, 8, 0, Math.PI * 2);
                 ctx.fill();
-                
-                // Draw velocity vector
-                ctx.strokeStyle = '#4ade80';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(agentX, agentY);
-                ctx.lineTo(agentX + env.velocity.x * 50, agentY + env.velocity.y * 50);
-                ctx.stroke();
-            }
+            });
         }
         
         function stopEpisode() {
@@ -557,7 +650,13 @@
         function resetEnvironments() {
             if (orchestrator) {
                 orchestrator.reset();
-                updateEnvironmentVisuals();
+                updateEnvironmentVisuals(orchestrator.environments.map(env => ({
+                    id: env.id,
+                    position: [0, 0, 0],
+                    reward: 0,
+                    totalReward: 0,
+                    stepCount: 0
+                })));
                 document.getElementById('avgReward').textContent = '0.00';
             }
         }
@@ -585,17 +684,17 @@
             ctx.stroke();
             
             // Draw FPS chart
-            if (performanceData.fps.length > 1) {
+            if (performanceData.rewards.length > 1) {
                 ctx.strokeStyle = '#4a9eff';
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 
-                const maxFps = Math.max(...performanceData.fps);
-                const xStep = (canvas.width - 60) / (performanceData.fps.length - 1);
+                const maxReward = Math.max(...performanceData.rewards);
+                const xStep = (canvas.width - 60) / (performanceData.rewards.length - 1);
                 
-                for (let i = 0; i < performanceData.fps.length; i++) {
+                for (let i = 0; i < performanceData.rewards.length; i++) {
                     const x = 40 + i * xStep;
-                    const y = canvas.height - 30 - (performanceData.fps[i] / maxFps) * (canvas.height - 50);
+                    const y = canvas.height - 30 - (performanceData.rewards[i] / maxReward) * (canvas.height - 50);
                     
                     if (i === 0) {
                         ctx.moveTo(x, y);
@@ -608,12 +707,11 @@
                 // Label
                 ctx.fillStyle = '#4a9eff';
                 ctx.font = '12px sans-serif';
-                ctx.fillText('FPS', 45, 35);
+                ctx.fillText('Reward', 45, 35);
             }
             
             // Keep only last 100 data points
-            if (performanceData.fps.length > 100) {
-                performanceData.fps = performanceData.fps.slice(-100);
+            if (performanceData.rewards.length > 100) {
                 performanceData.rewards = performanceData.rewards.slice(-100);
                 performanceData.timestamps = performanceData.timestamps.slice(-100);
             }
