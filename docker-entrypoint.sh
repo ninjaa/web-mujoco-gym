@@ -60,27 +60,28 @@ server {
     location /workspace/ {
         alias /app/workspace/;
         try_files \$uri \$uri/ =404;
-        add_header Cross-Origin-Embedder-Policy require-corp;
-        add_header Cross-Origin-Opener-Policy same-origin;
     }
     
     # Serve mujoco_wasm files from root
     location / {
         try_files \$uri \$uri/ =404;
-        add_header Cross-Origin-Embedder-Policy require-corp;
-        add_header Cross-Origin-Opener-Policy same-origin;
+    }
+    
+    # Serve dist files with CORS headers
+    location /dist/ {
+        add_header Access-Control-Allow-Origin * always;
     }
     
     # Proper MIME types for WASM files
     location ~ \.wasm$ {
         add_header Content-Type application/wasm;
-        add_header Cross-Origin-Embedder-Policy require-corp;
-        add_header Cross-Origin-Opener-Policy same-origin;
+        add_header Access-Control-Allow-Origin * always;
     }
     
     # Proper MIME types for JavaScript files
     location ~ \.js$ {
         add_header Content-Type application/javascript;
+        add_header Access-Control-Allow-Origin * always;
     }
 }
 EOF
