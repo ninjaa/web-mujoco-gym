@@ -4,6 +4,8 @@
 // Import Three.js and OrbitControls as ES modules
 import * as THREE from './node_modules/three/build/three.module.js';
 import { OrbitControls } from './node_modules/three/examples/jsm/controls/OrbitControls.js';
+import { Reflector } from './Reflector.js';
+import { DragStateManager } from './DragStateManager.js';
 
 let scene, camera, renderer, controls;
 let currentEnvId = null;
@@ -12,6 +14,7 @@ let robotGroup = null;
 let updateInterval = null;
 let modelData = null;
 let resizeHandler = null;
+let dragStateManager = null;
 
 // Make THREE available globally for debugging
 window.THREE = THREE;
@@ -27,6 +30,15 @@ function mujocoToThreePosition(mjPos) {
     y: mjPos[2], // Z -> Y
     z: -mjPos[1], // Y -> -Z
   };
+}
+
+function threeToMujocoPosition(threeVec) {
+  // Three.js Y-up to MuJoCo Z-up
+  return [
+    threeVec.x,
+    -threeVec.z, // -Z -> Y
+    threeVec.y   // Y -> Z
+  ];
 }
 
 function createThreeMaterial(mjMaterial) {
@@ -172,10 +184,10 @@ async function initThreeJS(state) {
   scene.background = new THREE.Color(0.15, 0.25, 0.35); // Dark blue background
   scene.fog = new THREE.Fog(0x263238, 5, 20); // Add fog for atmosphere
 
-  // Camera - position it to see the humanoid better
+  // Camera - lower angle for more cinematic view
   camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
-  camera.position.set(2, 1.5, 3); // Adjusted for humanoid height
-  camera.lookAt(0, 1, 0); // Look at torso height
+  camera.position.set(3, 0.8, 4); // Lower and further back
+  camera.lookAt(0, 0.7, 0); // Look at lower torso
 
   // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -193,7 +205,7 @@ async function initThreeJS(state) {
   controls.dampingFactor = 0.05;
   controls.minDistance = 1;
   controls.maxDistance = 10;
-  controls.target.set(0, 1, 0); // Target humanoid torso
+  controls.target.set(0, 0.7, 0); // Target lower torso for better view
   controls.update();
 
   // Lighting - match MuJoCo demo
@@ -219,29 +231,40 @@ async function initThreeJS(state) {
   helperLight.position.set(-2, 3, 2);
   scene.add(helperLight);
 
-  // Ground plane with shadow receiving
-  const groundGeometry = new THREE.PlaneGeometry(10, 10);
-  const groundMaterial = new THREE.ShadowMaterial({
-    opacity: 0.3,
-    color: 0x000000,
-  });
-  const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = 0;
-  ground.receiveShadow = true;
-  scene.add(ground);
+  // Create checkered texture
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext('2d');
+  
+  // Create checkered pattern matching the original
+  const squareSize = 64;
+  for (let i = 0; i < 8; i++) {
+    for (let j = 0; j < 8; j++) {
+      const isDark = (i + j) % 2 === 0;
+      // Using colors from humanoid.xml grid texture
+      context.fillStyle = isDark ? 'rgb(26, 51, 77)' : 'rgb(51, 77, 102)'; // rgb1=".1 .2 .3" rgb2=".2 .3 .4"
+      context.fillRect(i * squareSize, j * squareSize, squareSize, squareSize);
+    }
+  }
+  
+  const checkerTexture = new THREE.CanvasTexture(canvas);
+  checkerTexture.wrapS = THREE.RepeatWrapping;
+  checkerTexture.wrapT = THREE.RepeatWrapping;
+  checkerTexture.repeat.set(10, 10);
 
-  // Add a visible floor for reference
-  const floorGeometry = new THREE.PlaneGeometry(10, 10);
-  const floorMaterial = new THREE.MeshStandardMaterial({
-    color: 0x1a1a1a,
-    roughness: 0.8,
-    metalness: 0.2,
-  });
-  const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+  // Create reflective floor with checkered pattern
+  const floor = new Reflector(
+    new THREE.PlaneGeometry(100, 100),
+    {
+      clipBias: 0.003,
+      texture: checkerTexture,
+      color: 0x777777,
+      multisample: 4
+    }
+  );
   floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -0.01; // Slightly below shadow plane
-  floor.receiveShadow = true;
+  floor.position.y = 0;
   scene.add(floor);
 
   // Create robot
@@ -255,6 +278,15 @@ async function initThreeJS(state) {
   // Handle window resize - store the handler so we can remove it later
   resizeHandler = onWindowResize;
   window.addEventListener("resize", resizeHandler);
+  
+  // Initialize drag interaction
+  dragStateManager = new DragStateManager(
+    scene,
+    renderer,
+    camera,
+    container,
+    controls
+  );
 }
 
 function loadThreeJS() {
@@ -403,6 +435,8 @@ function createRobot() {
           // Cast shadows
           mesh.castShadow = true;
           mesh.receiveShadow = true;
+          // Set bodyID for drag interaction
+          mesh.bodyID = body.index;
           bodyGroup.add(mesh);
         }
       });
@@ -625,7 +659,34 @@ function animate(state) {
     controls.update();
   }
 
-  // No more fake rotation - pose is updated by updateRobotPose()
+  // Handle drag forces
+  if (dragStateManager) {
+    dragStateManager.update();
+    
+    const dragged = dragStateManager.physicsObject;
+    if (dragged && dragged.bodyID && window.mujocoOrchestrator) {
+      // Calculate force vector
+      const force = dragStateManager.currentWorld.clone()
+        .sub(dragStateManager.worldHit)
+        .multiplyScalar(250); // Adjust force magnitude
+      
+      // Convert to MuJoCo coordinates
+      const mjForce = threeToMujocoPosition(force);
+      const mjPoint = threeToMujocoPosition(dragStateManager.worldHit);
+      
+      // Send force to physics simulation
+      window.mujocoOrchestrator.applyForce(currentEnvId, dragged.bodyID, mjForce, mjPoint);
+    } else if (dragStateManager.lastDraggedBody && !dragged) {
+      // Drag ended, clear forces
+      window.mujocoOrchestrator.applyForce(currentEnvId, dragStateManager.lastDraggedBody, [0, 0, 0], [0, 0, 0]);
+      dragStateManager.lastDraggedBody = null;
+    }
+    
+    // Track last dragged body
+    if (dragged && dragged.bodyID) {
+      dragStateManager.lastDraggedBody = dragged.bodyID;
+    }
+  }
 
   // Render
   if (renderer && scene && camera) {
@@ -691,6 +752,11 @@ export function closeModal() {
   if (controls) {
     controls.dispose();
     controls = null;
+  }
+  
+  // Clean up drag state manager
+  if (dragStateManager) {
+    dragStateManager = null;
   }
   
   robotGroup = null;

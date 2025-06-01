@@ -241,6 +241,21 @@ class MuJoCoRLOrchestrator {
         this.episodeCount = 0;
         this.stepCount = 0;
     }
+    
+    applyForce(envId, bodyId, force, point) {
+        const env = this.environments.find(e => e.id === envId);
+        if (env) {
+            this.sendMessage(env.workerId, {
+                type: 'applyForce',
+                data: {
+                    envId: envId,
+                    bodyId: bodyId,
+                    force: force,
+                    point: point
+                }
+            });
+        }
+    }
 }
 
 export { MuJoCoRLOrchestrator };

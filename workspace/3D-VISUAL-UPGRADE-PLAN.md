@@ -1,113 +1,84 @@
-# 3D Visualization Upgrade Plan: Marionette-Style Rendering
+# 3D Visualization Upgrade Plan: Interactive Physics
 
 ## Goal
-Transform our basic 3D visualization to match the visual quality of the original MuJoCo WASM demo's marionette-style humanoid.
+Add interactive dragging and visual enhancements to match the original MuJoCo WASM demo.
 
-## Current Issues
-1. Gray, flat-shaded robot vs. skin-colored marionette
-2. Static geometry vs. physics-driven animation
-3. No joint movement vs. smooth articulation
-4. Basic materials vs. physical materials with textures
+## Remaining Tasks
 
-## Step-by-Step Implementation Tasks
+### Task 1: Checkered Floor with Reflection
+- [ ] Implement Reflector.js for reflective floor
+- [ ] Use grid texture from humanoid.xml (already defined)
+- [ ] Create 100x100 plane with reflections
+- [ ] Apply checkered pattern with proper texture repeat
 
-### Step 1: Fix Immediate Error (Quick Fix)
-- [ ] Fix "openModal function not found" error
-- [ ] Ensure modal can open when clicking environments
+### Task 2: Interactive Body Dragging
+- [ ] Integrate DragStateManager.js
+- [ ] Add pointer event handlers to canvas
+- [ ] Implement raycasting for body selection
+- [ ] Apply physics forces based on drag motion
+- [ ] Show arrow helper for force visualization
 
-### Step 2: Extract MuJoCo Model Data
-- [ ] Create `mujoco-model-parser.js` module
-- [ ] Parse humanoid.xml for:
-  - Body hierarchy and names
-  - Geom types, sizes, and positions
-  - Material properties and colors
-  - Joint locations and axes
-- [ ] Convert MuJoCo coordinates to Three.js (Y-up)
+### Task 3: Visual Polish
+- [ ] Adjust camera angle to be lower and more cinematic
+- [ ] Fine-tune lighting for more dramatic shadows
+- [ ] Add proper fog settings for atmosphere
+- [ ] Ensure shadows are properly cast and received
 
-### Step 3: Implement Proper Materials
-- [ ] Load MuJoCo material data:
-  ```javascript
-  // Target material from humanoid.xml
-  material.color = new THREE.Color(0.8, 0.6, 0.4); // Skin tone
-  material.roughness = 0.6;
-  material.metalness = 0.1;
-  ```
-- [ ] Create texture from MuJoCo's "body" texture definition
-- [ ] Apply MeshPhysicalMaterial with proper properties
+### Task 4: Physics Integration
+- [ ] Pass force data from drag manager to worker
+- [ ] Apply forces to MuJoCo simulation via `applyForce`
+- [ ] Update body positions from physics state
+- [ ] Handle body selection highlighting
 
-### Step 4: Build Accurate Geometry
-- [ ] Replace hardcoded shapes with MuJoCo geoms:
-  - Capsules for limbs (CapsuleGeometry)
-  - Spheres for joints and head
-  - Proper sizes from model data
-- [ ] Create body hierarchy matching MuJoCo structure
-- [ ] Position bodies at exact MuJoCo coordinates
+## Implementation Details
 
-### Step 5: Sync with Physics Data
-- [ ] Pass full MuJoCo state to 3D modal:
-  - `xpos` array (body positions)
-  - `xquat` array (body rotations)
-  - Joint angles
-- [ ] Update robot pose each frame:
-  ```javascript
-  // For each body
-  getPosition(simulation.xpos, bodyIndex, body.position);
-  getQuaternion(simulation.xquat, bodyIndex, body.quaternion);
-  ```
-
-### Step 6: Lighting and Atmosphere
-- [ ] Match MuJoCo scene settings:
-  - Background: `rgb(0.15, 0.25, 0.35)` with fog
-  - Spotlight targeting torso
-  - Ambient light at 0.1 intensity
-- [ ] Enable soft shadows (PCFSoftShadowMap)
-
-### Step 7: Advanced Features
-- [ ] Add tendon visualization (red cylinders)
-- [ ] Implement joint constraints visualization
-- [ ] Add floor reflection (using Reflector)
-- [ ] Show contact points when robot touches ground
-
-### Step 8: Performance Optimization
-- [ ] Use InstancedMesh for multiple robots
-- [ ] LOD (Level of Detail) for distant robots
-- [ ] Frustum culling for off-screen geometry
-
-## Technical Reference
-
-### MuJoCo to Three.js Coordinate Conversion
+### Floor with Reflection
 ```javascript
-// MuJoCo uses Z-up, Three.js uses Y-up
-function mujocoToThreePosition(x, y, z) {
-  return new THREE.Vector3(x, z, -y);
+// From original demo
+mesh = new Reflector(
+  new THREE.PlaneGeometry(100, 100), 
+  { clipBias: 0.003, texture: gridTexture }
+);
+mesh.rotateX(-Math.PI / 2);
+```
+
+### DragStateManager Setup
+```javascript
+this.dragStateManager = new DragStateManager(
+  this.scene, 
+  this.renderer, 
+  this.camera, 
+  this.container.parentElement, 
+  this.controls
+);
+```
+
+### Force Application
+```javascript
+// In animation loop
+let dragged = this.dragStateManager.physicsObject;
+if (dragged && dragged.bodyID) {
+  let bodyID = dragged.bodyID;
+  let force = toMujocoPos(
+    this.dragStateManager.currentWorld.clone()
+    .sub(this.dragStateManager.worldHit)
+    .multiplyScalar(this.model.body_mass[bodyID] * 250)
+  );
+  // Apply force to simulation
 }
 ```
 
-### Body Index Mapping
-```javascript
-// From worker observation
-const bodyIndices = {
-  world: 0,
-  torso: 1,
-  head: 2,
-  pelvis: 3,
-  // ... etc
-};
-```
+### Texture Loading from Model
+The humanoid.xml already defines:
+- Grid texture: `builtin="checker"` with `rgb1=".1 .2 .3" rgb2=".2 .3 .4"`
+- Body texture: `builtin="flat"` with skin tone
 
-### Material Properties from XML
-```xml
-<material name="body" texture="body" texuniform="true" rgba="0.8 0.6 .4 1"/>
-```
-
-## Testing Checklist
-- [ ] Robot appears with skin color, not gray
-- [ ] Joints move smoothly with physics
-- [ ] Shadows cast properly
-- [ ] Performance stays above 30 FPS
-- [ ] Coordinate axes align correctly
+## Files to Modify
+1. `threejs-modal.js` - Add drag interaction and reflective floor
+2. `mujoco-orchestrator.js` - Add force application method
+3. `mujoco-rl-worker.js` - Handle force application in physics
 
 ## Resources
-- Original demo: `docker compose exec mujoco-wasm cat /app/mujoco_wasm/examples/main.js`
-- Utils: `docker compose exec mujoco-wasm cat /app/mujoco_wasm/examples/mujocoUtils.js`
-- Model: `/workspace/humanoid.xml`
+- DragStateManager.js - Copied from original demo
+- Reflector.js - Copied from original demo
+- Original implementation: `/app/mujoco_wasm/examples/`

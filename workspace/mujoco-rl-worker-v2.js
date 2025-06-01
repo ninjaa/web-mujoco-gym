@@ -8,6 +8,7 @@ let simulation = null;
 let envConfig = null;
 let envState = null;
 let modelConfig = null;
+let dragState = null; // Store current drag state
 
 // Initialize MuJoCo when worker starts
 self.onmessage = async function(e) {
@@ -43,6 +44,14 @@ self.onmessage = async function(e) {
             case 'getState':
                 if (simulation) {
                     getEnvironmentState(data, id);
+                } else {
+                    throw new Error('Simulation not initialized');
+                }
+                break;
+                
+            case 'applyForce':
+                if (simulation && mujoco) {
+                    applyForce(data, id);
                 } else {
                     throw new Error('Simulation not initialized');
                 }
@@ -271,6 +280,19 @@ function stepSimulation(data, id) {
             }
         }
         
+        // Apply drag forces if active
+        if (dragState && dragState.active) {
+            const { bodyId, force, point } = dragState;
+            if (simulation.applyForce) {
+                simulation.applyForce(
+                    force[0], force[1], force[2],  // force
+                    0, 0, 0,  // torque
+                    point[0], point[1], point[2],  // point
+                    bodyId
+                );
+            }
+        }
+        
         // Step physics
         simulation.step();
         
@@ -477,6 +499,39 @@ function getEnvironmentState(data, id) {
             envId: data.envId || envConfig.envId || 0,
             observation: observation,
             info: envState
+        }
+    });
+}
+
+
+function applyForce(data, id) {
+    if (!simulation || !model) return;
+    
+    const { bodyId, force, point } = data;
+    
+    // Store drag state to be applied during physics steps
+    if (force && (force[0] !== 0 || force[1] !== 0 || force[2] !== 0)) {
+        dragState = {
+            active: true,
+            bodyId: bodyId,
+            force: force,
+            point: point
+        };
+        console.log(`Drag state activated for body ${bodyId}`);
+    } else {
+        // Clear drag state if force is zero
+        dragState = null;
+        console.log(`Drag state cleared`);
+    }
+    
+    // Send confirmation
+    self.postMessage({
+        type: "forceApplied",
+        id: id,
+        data: {
+            bodyId: bodyId,
+            force: force,
+            active: dragState !== null
         }
     });
 }
