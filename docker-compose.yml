@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  mujoco-wasm:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/amd64
+    image: mujoco-wasm:latest
+    container_name: mujoco-wasm-container
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount local directory for development
+      - ./workspace:/app/workspace
+      # Persist the built files
+      - mujoco-build:/app/mujoco_wasm
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+    command: build-and-serve
+    stdin_open: true
+    tty: true
+
+volumes:
+  mujoco-build:
