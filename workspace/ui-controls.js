@@ -14,6 +14,13 @@ export const state = {
     perfData: {
         timestamps: [],
         rewards: []
+    },
+    // For smooth number transitions
+    animatedValues: {
+        activeEnvs: { current: 0, target: 0, element: null },
+        avgFPS: { current: 0, target: 0, element: null },
+        avgReward: { current: 0, target: 0, element: null },
+        totalEpisodes: { current: 0, target: 0, element: null }
     }
 };
 
@@ -172,19 +179,68 @@ export async function renderLoop() {
     }
 }
 
+// Smooth number animation helper
+function animateValue(key, targetValue, decimals = 0) {
+    const anim = state.animatedValues[key];
+    if (!anim.element) {
+        anim.element = document.getElementById(key);
+    }
+    
+    // Set target
+    anim.target = targetValue;
+    
+    // If not already animating, start animation
+    if (!anim.animating) {
+        anim.animating = true;
+        
+        const animate = () => {
+            const diff = anim.target - anim.current;
+            
+            if (Math.abs(diff) < 0.01) {
+                anim.current = anim.target;
+                anim.animating = false;
+            } else {
+                // Smooth easing
+                anim.current += diff * 0.15;
+                
+                if (anim.animating) {
+                    requestAnimationFrame(animate);
+                }
+            }
+            
+            // Update display with pulsing effect when changing
+            if (anim.element) {
+                anim.element.textContent = anim.current.toFixed(decimals);
+                
+                // Add pulse effect on significant change
+                if (Math.abs(diff) > 0.1) {
+                    anim.element.style.transform = 'scale(1.1)';
+                    anim.element.style.textShadow = '0 0 30px rgba(74, 158, 255, 0.8)';
+                    setTimeout(() => {
+                        if (anim.element) {
+                            anim.element.style.transform = 'scale(1)';
+                            anim.element.style.textShadow = '0 0 20px rgba(74, 158, 255, 0.5)';
+                        }
+                    }, 200);
+                }
+            }
+        };
+        
+        animate();
+    }
+}
+
 // Update global statistics
 export function updateStats() {
     const currentTime = Date.now();
     const elapsed = (currentTime - state.episodeStartTime) / 1000;
     const fps = state.frameCount / elapsed;
     
-    document.getElementById('activeEnvs').textContent = 
-        state.orchestrator ? state.orchestrator.numEnvironments : '0';
-    document.getElementById('avgFPS').textContent = fps.toFixed(1);
-    document.getElementById('avgReward').textContent = 
-        state.orchestrator ? state.orchestrator.getAverageReward().toFixed(2) : '0.00';
-    document.getElementById('totalEpisodes').textContent = 
-        state.orchestrator ? state.orchestrator.episodeCount : '0';
+    // Update with smooth animations
+    animateValue('activeEnvs', state.orchestrator ? state.orchestrator.numEnvironments : 0, 0);
+    animateValue('avgFPS', fps || 0, 1);
+    animateValue('avgReward', state.orchestrator ? state.orchestrator.getAverageReward() : 0, 2);
+    animateValue('totalEpisodes', state.orchestrator ? state.orchestrator.episodeCount : 0, 0);
     
     // Update performance data
     if (state.frameCount % 30 === 0) { // Update every 30 frames
@@ -255,7 +311,7 @@ export function createEnvironmentDisplays(numEnvs) {
     }
 }
 
-// Update performance chart
+// Update performance chart with jazzy styling
 export function updatePerformanceChart() {
     const canvas = document.getElementById('performanceCanvas');
     if (!canvas) return;
@@ -266,26 +322,48 @@ export function updatePerformanceChart() {
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
     
-    // Clear canvas
-    ctx.fillStyle = '#1a1a1a';
+    // Clear canvas with gradient background
+    const bgGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    bgGradient.addColorStop(0, 'rgba(20, 30, 40, 0.95)');
+    bgGradient.addColorStop(1, 'rgba(15, 20, 30, 0.95)');
+    ctx.fillStyle = bgGradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Draw axes
-    ctx.strokeStyle = '#444';
+    // Draw glowing grid
+    ctx.strokeStyle = 'rgba(74, 158, 255, 0.1)';
     ctx.lineWidth = 1;
+    
+    // Vertical grid lines
+    for (let x = 40; x < canvas.width - 20; x += 50) {
+        ctx.beginPath();
+        ctx.moveTo(x, 20);
+        ctx.lineTo(x, canvas.height - 30);
+        ctx.stroke();
+    }
+    
+    // Horizontal grid lines
+    for (let y = 20; y < canvas.height - 30; y += 30) {
+        ctx.beginPath();
+        ctx.moveTo(40, y);
+        ctx.lineTo(canvas.width - 20, y);
+        ctx.stroke();
+    }
+    
+    // Draw axes with glow
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = 'rgba(74, 158, 255, 0.5)';
+    ctx.strokeStyle = 'rgba(74, 158, 255, 0.8)';
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(40, canvas.height - 30);
     ctx.lineTo(canvas.width - 20, canvas.height - 30);
     ctx.moveTo(40, 20);
     ctx.lineTo(40, canvas.height - 30);
     ctx.stroke();
+    ctx.shadowBlur = 0;
     
-    // Draw reward chart
+    // Draw reward chart with jazzy styling
     if (state.perfData.rewards.length > 1) {
-        ctx.strokeStyle = '#4a9eff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        
         // Handle negative rewards
         const minReward = Math.min(...state.perfData.rewards, 0);
         const maxReward = Math.max(...state.perfData.rewards, 0.1);
@@ -294,7 +372,7 @@ export function updatePerformanceChart() {
         
         // Draw zero line if we have negative values
         if (minReward < 0) {
-            ctx.strokeStyle = '#666';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
             ctx.lineWidth = 1;
             ctx.setLineDash([5, 5]);
             ctx.beginPath();
@@ -304,15 +382,35 @@ export function updatePerformanceChart() {
             ctx.stroke();
             ctx.setLineDash([]);
             
-            // Zero label
-            ctx.fillStyle = '#666';
-            ctx.font = '10px sans-serif';
+            // Zero label with glow
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.font = 'bold 10px sans-serif';
             ctx.fillText('0', 25, zeroY + 3);
         }
         
-        // Draw reward line
+        // Create gradient fill under the line
+        const gradient = ctx.createLinearGradient(0, 20, 0, canvas.height - 30);
+        gradient.addColorStop(0, 'rgba(74, 158, 255, 0.3)');
+        gradient.addColorStop(1, 'rgba(74, 158, 255, 0.0)');
+        
+        // Draw filled area first
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.moveTo(40, canvas.height - 30);
+        for (let i = 0; i < state.perfData.rewards.length; i++) {
+            const x = 40 + i * xStep;
+            const y = canvas.height - 30 - ((state.perfData.rewards[i] - minReward) / range) * (canvas.height - 50);
+            ctx.lineTo(x, y);
+        }
+        ctx.lineTo(40 + (state.perfData.rewards.length - 1) * xStep, canvas.height - 30);
+        ctx.closePath();
+        ctx.fill();
+        
+        // Draw reward line with glow
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'rgba(74, 158, 255, 0.8)';
         ctx.strokeStyle = '#4a9eff';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.beginPath();
         
         for (let i = 0; i < state.perfData.rewards.length; i++) {
@@ -326,15 +424,31 @@ export function updatePerformanceChart() {
             }
         }
         ctx.stroke();
+        ctx.shadowBlur = 0;
         
-        // Label
-        ctx.fillStyle = '#4a9eff';
-        ctx.font = '12px sans-serif';
+        // Draw glowing points at data values
+        ctx.fillStyle = '#74b3ff';
+        for (let i = 0; i < state.perfData.rewards.length; i++) {
+            const x = 40 + i * xStep;
+            const y = canvas.height - 30 - ((state.perfData.rewards[i] - minReward) / range) * (canvas.height - 50);
+            ctx.beginPath();
+            ctx.arc(x, y, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        // Labels with glow
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = 'rgba(74, 158, 255, 0.5)';
+        ctx.fillStyle = '#74b3ff';
+        ctx.font = 'bold 14px sans-serif';
         ctx.fillText('Avg Reward', 45, 35);
         
-        // Show current value
+        // Show current value with highlight
         const currentReward = state.perfData.rewards[state.perfData.rewards.length - 1];
-        ctx.fillText(`Current: ${currentReward.toFixed(3)}`, canvas.width - 100, 35);
+        ctx.fillStyle = currentReward > 0 ? '#4ade80' : '#ff4444';
+        ctx.shadowColor = currentReward > 0 ? 'rgba(74, 222, 128, 0.5)' : 'rgba(255, 68, 68, 0.5)';
+        ctx.fillText(`Current: ${currentReward.toFixed(3)}`, canvas.width - 120, 35);
+        ctx.shadowBlur = 0;
     }
     
     // Keep only last 100 data points
