@@ -125,9 +125,9 @@ http://localhost:8080/workspace/mujoco-simple-test.html # Real MuJoCo test
 
 ## 📚 Technical Documentation
 
+- [**Project Status & Demo Guide**](./PROJECT-STATUS.md) - Current implementation status and demo instructions
 - [MuJoCo Array Mapping Guide](./MUJOCO-ARRAY-MAPPING.md) - Understanding how MuJoCo XML models map to WASM arrays
-- [Technical Brief](./TECHNICAL-BRIEF.md) - Architecture and implementation details
-- [Hackathon Status](./HACKATHON-STATUS.md) - Current progress and blockers
+- [Technical Architecture Brief](./TECHNICAL-BRIEF.md) - Deep dive into system design and performance
 
 ## 🌟 Unique Value Proposition
 
@@ -155,10 +155,11 @@ We're looking for help with:
 
 ## 📬 Contact
 
-- Hackathon Team: [your-email]
-- Project Lead: Aditya
-- GitHub: [your-github]
+- Hackathon Team: [aditya@bestparents.com]
+- Project Leads: Aditya, Richa
+- GitHub: [ninjaa]
 
 ---
 
-*Built with ❤️ at [Hackathon Name] 2025*
+*Built with ❤️ at CV x AIWF Hackathon 2025*
+*Shoutouts to Claude 4 Opus and Windsurf for the AI assistance*
