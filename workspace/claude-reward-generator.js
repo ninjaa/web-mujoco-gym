@@ -209,19 +209,63 @@ function(state, action) {
     }
     
     parseRewardFunction(response) {
-        // Extract function from Claude's response
-        const functionMatch = response.match(/function\s*\([^)]*\)\s*\{[^}]*\}/s);
-        if (functionMatch) {
-            return new Function('return ' + functionMatch[0])();
+        try {
+            // First try to find a function definition
+            const functionStart = response.indexOf('function');
+            if (functionStart !== -1) {
+                // Find matching braces
+                let braceCount = 0;
+                let inFunction = false;
+                let functionEnd = -1;
+                
+                for (let i = functionStart; i < response.length; i++) {
+                    if (response[i] === '{') {
+                        braceCount++;
+                        inFunction = true;
+                    } else if (response[i] === '}') {
+                        braceCount--;
+                        if (inFunction && braceCount === 0) {
+                            functionEnd = i + 1;
+                            break;
+                        }
+                    }
+                }
+                
+                if (functionEnd !== -1) {
+                    const functionCode = response.substring(functionStart, functionEnd);
+                    return new Function('return ' + functionCode)();
+                }
+            }
+            
+            // Try arrow function
+            const arrowMatch = response.match(/\(state,\s*action\)\s*=>\s*\{/);
+            if (arrowMatch) {
+                const start = arrowMatch.index;
+                let braceCount = 0;
+                let functionEnd = -1;
+                
+                for (let i = start; i < response.length; i++) {
+                    if (response[i] === '{') braceCount++;
+                    else if (response[i] === '}') {
+                        braceCount--;
+                        if (braceCount === 0) {
+                            functionEnd = i + 1;
+                            break;
+                        }
+                    }
+                }
+                
+                if (functionEnd !== -1) {
+                    const functionCode = response.substring(start, functionEnd);
+                    return new Function('return ' + functionCode)();
+                }
+            }
+            
+            throw new Error('Could not find function in response');
+        } catch (error) {
+            console.error('Parse error:', error);
+            throw new Error(`Could not parse reward function: ${error.message}`);
         }
-        
-        // Try to extract arrow function
-        const arrowMatch = response.match(/\([^)]*\)\s*=>\s*\{[^}]*\}/s);
-        if (arrowMatch) {
-            return new Function('return ' + arrowMatch[0])();
-        }
-        
-        throw new Error('Could not parse reward function from response');
     }
     
     validateRewardFunction(rewardFunction) {

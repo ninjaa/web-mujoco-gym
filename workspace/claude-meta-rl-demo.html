@@ -8,6 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <script src="./mujoco-orchestrator-v3.js"></script>
     <script src="./browser-rl.js"></script>
+    <script src="./browser-rl-es.js"></script>
     <script src="./visualization-2d.js"></script>
     <script src="./claude-reward-generator.js"></script>
     <script src="./claude-config.js?v=2"></script>
@@ -176,13 +177,13 @@
             💾 Export Winner
         </button>
         <label style="margin-left: 20px; color: #74b3ff;">
-            Episodes/iteration:
+            Generations/iteration:
             <select id="episodesPerIteration" style="background: rgba(0,0,0,0.3); color: #74b3ff; border: 1px solid #4a9eff; padding: 5px; border-radius: 5px;">
-                <option value="10">10 (Quick demo - 5% success)</option>
-                <option value="50" selected>50 (Moderate - 20% success)</option>
-                <option value="100">100 (Better - 40% success)</option>
-                <option value="200">200 (Good - 60% success)</option>
-                <option value="500">500 (Realistic - 80% success)</option>
+                <option value="5">5 (Quick demo)</option>
+                <option value="10" selected>10 (Fast)</option>
+                <option value="20">20 (Better)</option>
+                <option value="30">30 (Good)</option>
+                <option value="50">50 (Best)</option>
             </select>
         </label>
         <span id="apiStatus" style="margin-left: 20px; font-size: 14px; color: #888;">
@@ -231,36 +232,8 @@ Ready to begin! 🎯
             iteration: 0,
             isTraining: false,
             performanceChart: null,
-            policyConfigs: [
-                { 
-                    name: "Speed Demon", 
-                    color: "#ff6b6b",
-                    rewardFocus: "forward velocity",
-                    learningRate: 0.02,
-                    explorationNoise: 0.4
-                },
-                { 
-                    name: "Balance Master", 
-                    color: "#4a9eff",
-                    rewardFocus: "upright stability",
-                    learningRate: 0.01,
-                    explorationNoise: 0.2
-                },
-                { 
-                    name: "Energy Saver", 
-                    color: "#22c55e",
-                    rewardFocus: "efficiency",
-                    learningRate: 0.005,
-                    explorationNoise: 0.1
-                },
-                { 
-                    name: "Hybrid Explorer", 
-                    color: "#fbbf24",
-                    rewardFocus: "balanced",
-                    learningRate: 0.015,
-                    explorationNoise: 0.3
-                }
-            ]
+            policyConfigs: [],
+            colors: ["#ff6b6b", "#4a9eff", "#22c55e", "#fbbf24"]
         };
 
         // Initialize on load
@@ -300,8 +273,8 @@ Ready to begin! 🎯
                     </div>
                     <canvas id="canvas-${idx}" class="policy-canvas"></canvas>
                     <div class="policy-stats">
-                        <span class="stat">Reward: <span id="reward-${idx}" class="stat-value">0</span></span>
-                        <span class="stat">Episodes: <span id="episodes-${idx}" class="stat-value">0</span></span>
+                        <span class="stat">Best: <span id="reward-${idx}" class="stat-value">0</span></span>
+                        <span class="stat">Generation: <span id="episodes-${idx}" class="stat-value">0</span></span>
                     </div>
                 `;
                 grid.appendChild(box);
@@ -373,6 +346,111 @@ Ready to begin! 🎯
             document.getElementById('exportWinner').disabled = false;
         }
 
+        async function generateClaudeExperiment() {
+            const analysisDiv = document.getElementById('analysisText');
+            
+            const megaPrompt = `You are designing a meta-learning experiment for training humanoid robots. Generate 4 diverse training approaches.
+
+<requirements>
+For each approach, provide:
+1. A creative name (e.g., "Speed Demon", "Balance Master")
+2. The main focus/strategy
+3. Optimal learning rate (0.001 to 0.1)
+4. A complete reward function
+</requirements>
+
+<output_format>
+Output EXACTLY in this JSON format (no markdown, no code blocks):
+{
+  "approaches": [
+    {
+      "name": "Creative Name Here",
+      "focus": "what this approach optimizes for",
+      "learningRate": 0.02,
+      "rewardFunction": "function(state, action) { const bodyPos = state.bodyPos || [0,0,0]; const bodyVel = state.bodyVel || [0,0,0]; let reward = 0; /* your creative reward logic here */ return reward; }"
+    }
+  ]
+}
+</output_format>
+
+<ideas>
+Be creative! Consider approaches like:
+- Maximizing forward speed
+- Perfect balance and stability  
+- Energy efficiency
+- Graceful movement
+- Jumping/acrobatics
+- Dance-like motions
+- Exploration behaviors
+- Human-like walking
+</ideas>
+
+<constraints>
+- Make each reward function unique and interesting
+- Include appropriate penalties for falling (bodyPos[2] < 0.3)
+- Ensure functions are syntactically valid JavaScript
+</constraints>`;
+
+            try {
+                const response = await fetch('http://localhost:3001/claude', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': window.CLAUDE_CONFIG.apiKey,
+                        'anthropic-version': '2023-06-01'
+                    },
+                    body: JSON.stringify({
+                        model: window.CLAUDE_CONFIG.model,
+                        max_tokens: 2000,
+                        messages: [{
+                            role: 'user',
+                            content: megaPrompt
+                        }]
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API request failed: ${response.status}`);
+                }
+
+                const data = await response.json();
+                let responseText = data.content[0].text;
+                
+                // Strip markdown code blocks if present
+                responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+                
+                // Parse the JSON response
+                const experiment = JSON.parse(responseText);
+                
+                // Set up policy configs
+                window.metaState.policyConfigs = experiment.approaches.map((approach, i) => ({
+                    name: approach.name,
+                    color: window.metaState.colors[i],
+                    rewardFocus: approach.focus,
+                    learningRate: approach.learningRate,
+                    rewardFunction: new Function('return ' + approach.rewardFunction)()
+                }));
+                
+                analysisDiv.textContent += '\n\n✨ Claude designed these approaches:';
+                window.metaState.policyConfigs.forEach(config => {
+                    analysisDiv.textContent += `\n• ${config.name}: ${config.rewardFocus} (LR: ${config.learningRate})`;
+                });
+                
+            } catch (error) {
+                console.error('Failed to generate experiment:', error);
+                console.error('Response was:', responseText);
+                analysisDiv.textContent += '\n\n⚠️ Failed to parse Claude\'s response, using defaults...';
+                
+                // Fallback configs
+                window.metaState.policyConfigs = [
+                    { name: "Speed Demon", color: "#ff6b6b", rewardFocus: "forward velocity", learningRate: 0.03 },
+                    { name: "Balance Master", color: "#4a9eff", rewardFocus: "upright stability", learningRate: 0.01 },
+                    { name: "Energy Saver", color: "#22c55e", rewardFocus: "efficiency", learningRate: 0.02 },
+                    { name: "Hybrid Explorer", color: "#fbbf24", rewardFocus: "balanced", learningRate: 0.02 }
+                ];
+            }
+        }
+
         async function runMetaIteration(iteration) {
             const analysisDiv = document.getElementById('analysisText');
             
@@ -384,6 +462,24 @@ Ready to begin! 🎯
                 window.metaState.claudeGenerator = new ClaudeRewardGenerator(apiKey);
             }
 
+            // On first iteration, generate experiment design
+            if (iteration === 0) {
+                if (window.CLAUDE_CONFIG && window.CLAUDE_CONFIG.apiKey !== 'YOUR_ANTHROPIC_API_KEY_HERE') {
+                    analysisDiv.textContent += '\n\n🤖 Asking Claude to design the entire experiment...';
+                    await generateClaudeExperiment();
+                } else {
+                    // Default configs if no API
+                    window.metaState.policyConfigs = [
+                        { name: "Speed Demon", color: "#ff6b6b", rewardFocus: "forward velocity", learningRate: 0.03 },
+                        { name: "Balance Master", color: "#4a9eff", rewardFocus: "upright stability", learningRate: 0.01 },
+                        { name: "Energy Saver", color: "#22c55e", rewardFocus: "efficiency", learningRate: 0.02 },
+                        { name: "Hybrid Explorer", color: "#fbbf24", rewardFocus: "balanced", learningRate: 0.02 }
+                    ];
+                }
+                // Reinitialize grid with new configs
+                initializePolicyGrid();
+            }
+
             // Create policies and orchestrators
             window.metaState.policies = [];
             window.metaState.orchestrators = [];
@@ -391,7 +487,7 @@ Ready to begin! 🎯
             for (let i = 0; i < window.metaState.policyConfigs.length; i++) {
                 const config = window.metaState.policyConfigs[i];
                 
-                // Create custom BrowserRL with config
+                // Create BrowserRL policy with config
                 const policy = new BrowserRL();
                 policy.learningRate = config.learningRate;
                 window.metaState.policies.push(policy);
@@ -409,6 +505,14 @@ Ready to begin! 🎯
             analysisDiv.textContent += '\n\n🧠 Generating reward functions...';
             const rewardFunctions = await generateClaudeGuidedRewardFunctions(iteration);
             
+            // Show generated functions (first few lines)
+            if (window.CLAUDE_CONFIG && window.CLAUDE_CONFIG.apiKey !== 'YOUR_ANTHROPIC_API_KEY_HERE') {
+                analysisDiv.textContent += '\n\n📝 Claude generated custom reward functions for:';
+                window.metaState.policyConfigs.forEach((config, i) => {
+                    analysisDiv.textContent += `\n• ${config.name}: Focus on ${config.rewardFocus}`;
+                });
+            }
+            
             // Train all policies in parallel
             analysisDiv.textContent += `\n\n⚡ Training ${window.metaState.policies.length} policies in parallel...`;
             
@@ -416,7 +520,7 @@ Ready to begin! 🎯
             const episodesSelect = document.getElementById('episodesPerIteration');
             const episodesPerPolicy = parseInt(episodesSelect.value);
             
-            analysisDiv.textContent += `\n(${episodesPerPolicy} episodes per policy)`;
+            analysisDiv.textContent += `\n(${episodesPerPolicy} generations per policy)`;
             
             await trainPoliciesInParallel(rewardFunctions, episodesPerPolicy);
             
@@ -424,7 +528,7 @@ Ready to begin! 🎯
             const performances = window.metaState.policies.map((p, i) => ({
                 index: i,
                 name: window.metaState.policyConfigs[i].name,
-                avgReward: p.rewardHistory.slice(-5).reduce((a,b) => a+b, 0) / 5
+                avgReward: p.bestReward || -Infinity
             }));
             
             performances.sort((a, b) => b.avgReward - a.avgReward);
@@ -440,12 +544,17 @@ ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).joi
         async function generateClaudeGuidedRewardFunctions(iteration) {
             const rewards = [];
             
+            // If configs already have reward functions (from mega prompt), use those
+            if (iteration === 0 && window.metaState.policyConfigs[0].rewardFunction) {
+                return window.metaState.policyConfigs.map(config => config.rewardFunction);
+            }
+            
             // If no real Claude API, fall back to diverse functions
             if (!window.CLAUDE_CONFIG || window.CLAUDE_CONFIG.apiKey === 'YOUR_ANTHROPIC_API_KEY_HERE') {
                 return generateDiverseRewardFunctions();
             }
             
-            // Use Claude to generate reward functions based on iteration learnings
+            // For later iterations, use Claude to refine reward functions
             for (let i = 0; i < window.metaState.policyConfigs.length; i++) {
                 const config = window.metaState.policyConfigs[i];
                 
@@ -466,6 +575,7 @@ ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).joi
                 try {
                     const rewardFn = await window.metaState.claudeGenerator.generateReward(taskDescription);
                     rewards.push(rewardFn);
+                    console.log(`Claude generated reward for ${config.name}:`, taskDescription);
                 } catch (error) {
                     console.error('Claude generation failed:', error);
                     // Fallback to hardcoded
@@ -546,8 +656,10 @@ ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).joi
                     const promise = trainSingleEpisode(i, rewardFunctions[i]);
                     promises.push(promise);
                     
-                    // Update episode counter
-                    document.getElementById(`episodes-${i}`).textContent = ep + 1;
+                    // Update generation counter after training
+                    if (window.metaState.policies[i].generation) {
+                        document.getElementById(`episodes-${i}`).textContent = window.metaState.policies[i].generation;
+                    }
                 }
                 
                 // Wait for all to complete
@@ -565,22 +677,22 @@ ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).joi
             const policy = window.metaState.policies[policyIndex];
             const orchestrator = window.metaState.orchestrators[policyIndex];
             
-            // Set up visualization callback
-            const canvasData = window.metaState[`canvas${policyIndex}`];
-            if (canvasData) {
-                policy.onTrainingStep = (data) => {
-                    if (data.state) {
-                        drawMiniVisualization(canvasData.ctx, { observation: data.state });
-                    }
-                };
+            // Train one episode with BrowserRL
+            const episodeReward = await policy.trainEpisode(orchestrator, rewardFunction, 0);
+            
+            // Track best reward manually
+            if (!policy.bestReward) policy.bestReward = -Infinity;
+            if (!policy.generation) policy.generation = 0;
+            
+            policy.generation++;
+            if (episodeReward > policy.bestReward) {
+                policy.bestReward = episodeReward;
             }
             
-            const reward = await policy.trainEpisode(orchestrator, rewardFunction, 0);
-            
             // Update display
-            document.getElementById(`reward-${policyIndex}`).textContent = reward.toFixed(1);
+            document.getElementById(`reward-${policyIndex}`).textContent = episodeReward.toFixed(1);
             
-            return reward;
+            return episodeReward;
         }
 
         function setupPolicyVisualization(index) {
@@ -595,9 +707,21 @@ ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).joi
             // Start orchestrator
             const orchestrator = window.metaState.orchestrators[index];
             orchestrator.start();
+            
+            // Set up visualization update loop
+            const updateVis = () => {
+                const state = orchestrator.getEnvironmentState(0);
+                if (state && state.observation) {
+                    drawMiniVisualization(ctx, state, index);
+                }
+                if (window.metaState.isTraining) {
+                    requestAnimationFrame(updateVis);
+                }
+            };
+            requestAnimationFrame(updateVis);
         }
 
-        function drawMiniVisualization(ctx, state) {
+        function drawMiniVisualization(ctx, state, policyIndex) {
             const obs = state.observation;
             const bodyPos = obs.bodyPos || [0, 0, 1];
             const fallen = bodyPos[2] < 0.8;
@@ -616,7 +740,7 @@ ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).joi
             // Draw mini stick figure
             ctx.save();
             ctx.scale(0.5, 0.5);
-            drawStickFigure(ctx, x * 2, y * 2, '#4a9eff', fallen, obs);
+            drawStickFigure(ctx, x * 2, y * 2, window.metaState.policyConfigs[policyIndex]?.color || '#4a9eff', fallen, obs);
             ctx.restore();
             
             // Ground line
@@ -633,11 +757,13 @@ ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).joi
             
             // Add new data point
             const episodeNum = chart.data.labels.length + 1;
-            chart.data.labels.push(`E${episodeNum}`);
+            chart.data.labels.push(`G${episodeNum}`);
             
             window.metaState.policies.forEach((policy, i) => {
-                const lastReward = policy.rewardHistory[policy.rewardHistory.length - 1] || 0;
-                chart.data.datasets[i].data.push(lastReward);
+                const lastReward = policy.bestReward || 0;
+                if (chart.data.datasets[i]) {
+                    chart.data.datasets[i].data.push(lastReward);
+                }
             });
             
             // Keep last 30 points
@@ -657,11 +783,9 @@ ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).joi
             // Get performance data
             const performances = window.metaState.policies.map((p, i) => ({
                 config: window.metaState.policyConfigs[i],
-                avgReward: p.rewardHistory.slice(-5).reduce((a,b) => a+b, 0) / 5,
-                improvement: p.rewardHistory.length > 5 ? 
-                    (p.rewardHistory.slice(-5).reduce((a,b) => a+b, 0) / 5) - 
-                    (p.rewardHistory.slice(0, 5).reduce((a,b) => a+b, 0) / 5) : 0,
-                rewardHistory: p.rewardHistory.slice(-10)
+                avgReward: p.bestReward || -Infinity,
+                improvement: p.generation > 5 ? p.bestReward - (p.rewardHistory[0] || 0) : 0,
+                generation: p.generation
             }));
             
             performances.sort((a, b) => b.avgReward - a.avgReward);
@@ -700,7 +824,7 @@ Policy "${p.config.name}":
 - Learning Rate: ${p.config.learningRate}
 - Avg Reward: ${p.avgReward.toFixed(2)}
 - Improvement: ${p.improvement.toFixed(2)}
-- Recent rewards: ${p.rewardHistory.map(r => r.toFixed(1)).join(', ')}
+- Best reward: ${p.avgReward.toFixed(1)}, Generation: ${p.generation}
 `).join('\n')}
 
 Based on these results:
@@ -836,10 +960,8 @@ ${improvements.map((imp, i) => `${i+1}. ${imp}`).join('\n')}`;
             
             const finalPerformances = window.metaState.policies.map((p, i) => ({
                 name: window.metaState.policyConfigs[i].name,
-                avgReward: p.rewardHistory.slice(-10).reduce((a,b) => a+b, 0) / 10,
-                totalImprovement: p.rewardHistory.length > 10 ?
-                    (p.rewardHistory.slice(-10).reduce((a,b) => a+b, 0) / 10) -
-                    (p.rewardHistory.slice(0, 10).reduce((a,b) => a+b, 0) / 10) : 0
+                avgReward: p.bestReward || -Infinity,
+                totalImprovement: p.generation > 0 ? p.bestReward - (p.rewardHistory[0] || 0) : 0
             }));
             
             finalPerformances.sort((a, b) => b.avgReward - a.avgReward);
@@ -882,7 +1004,7 @@ Key Insights:
                 index: i,
                 policy: p,
                 config: window.metaState.policyConfigs[i],
-                avgReward: p.rewardHistory.slice(-10).reduce((a,b) => a+b, 0) / 10
+                avgReward: p.bestReward || -Infinity
             }));
             
             performances.sort((a, b) => b.avgReward - a.avgReward);
@@ -893,7 +1015,7 @@ Key Insights:
                 policyName: winner.config.name,
                 avgReward: winner.avgReward,
                 config: winner.config,
-                network: winner.policy.policy.serialize(),
+                network: winner.policy.serialize(),
                 timestamp: new Date().toISOString()
             };
             
