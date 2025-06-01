@@ -3,9 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MuJoCo Multi-Environment RL Demo</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/controls/OrbitControls.js"></script>
+    <title>MuJoCo Multi-Environment Demo</title>
+    
+    <!-- Import map for Three.js modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "./node_modules/three/build/three.module.js",
+            "three/addons/": "./node_modules/three/examples/jsm/"
+        }
+    }
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <style>
         body {
@@ -496,11 +504,17 @@
                     
                     // Import and use the openEnvironment3D function
                     try {
+                        console.log('About to import threejs-modal.js...');
                         const { openEnvironment3D } = await import('./threejs-modal.js');
+                        console.log('Import successful, getting state...');
                         const state = window.mujocoOrchestrator?.getEnvironmentState(envId);
+                        console.log('Got state:', state);
+                        console.log('Calling openEnvironment3D...');
                         await openEnvironment3D(envId, state);
+                        console.log('openEnvironment3D completed');
                     } catch (error) {
                         console.error('Failed to open 3D view:', error);
+                        console.error('Error stack:', error.stack);
                     }
                 }
             });

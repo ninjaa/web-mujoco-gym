@@ -108,6 +108,6 @@ const bodyIndices = {
 - [ ] Coordinate axes align correctly
 
 ## Resources
-- Original demo: `/app/mujoco_wasm/examples/main.js`
-- Utils: `/app/mujoco_wasm/examples/mujocoUtils.js`
+- Original demo: `docker compose exec mujoco-wasm cat /app/mujoco_wasm/examples/main.js`
+- Utils: `docker compose exec mujoco-wasm cat /app/mujoco_wasm/examples/mujocoUtils.js`
 - Model: `/workspace/humanoid.xml`

@@ -340,6 +340,18 @@ function getObservation() {
         console.error('Failed to get body position:', e);
     }
     
+    // Get all body positions (xpos) for full animation
+    const xpos = [];
+    for (let i = 0; i < model.nbody * 3; i++) {
+        xpos.push(simulation.xpos[i]);
+    }
+    
+    // Get all body quaternions (xquat) for full animation
+    const xquat = [];
+    for (let i = 0; i < model.nbody * 4; i++) {
+        xquat.push(simulation.xquat[i]);
+    }
+    
     // Get joint positions for state
     const qpos = [];
     for (let i = 0; i < model.nq; i++) {
@@ -357,6 +369,8 @@ function getObservation() {
         bodyPos: bodyPos,  
         qpos: qpos,
         qvel: qvel,
+        xpos: xpos,    // All body positions
+        xquat: xquat,  // All body rotations
         time: simulation.time,
         actions: simulation.ctrl ? Array.from(simulation.ctrl).slice(0, model.nu) : []  
     };

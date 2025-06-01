@@ -1,402 +1,668 @@
 // Three.js Modal for 3D environment visualization
 // VERSION: 2024-06-01-00:08 - Added debug logging
-// For now, using vanilla Three.js without ES6 modules for simplicity
+
+// Import Three.js and OrbitControls as ES modules
+import * as THREE from './node_modules/three/build/three.module.js';
+import { OrbitControls } from './node_modules/three/examples/jsm/controls/OrbitControls.js';
+
 let scene, camera, renderer, controls;
 let currentEnvId = null;
 let animationId = null;
 let robotGroup = null;
 let updateInterval = null;
+let modelData = null;
 
-export async function openEnvironment3D(envId, state) {
-    console.log('openEnvironment3D called with envId:', envId, 'state:', state);
-    currentEnvId = envId;
-    
-    // Show modal
-    const modal = document.getElementById('threejs-modal');
-    modal.classList.remove('hidden');
-    
-    // Update title
-    document.getElementById('modal-title').textContent = `Environment ${envId} - 3D View`;
-    
-    // Wait for modal to be visible and have dimensions
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Initialize Three.js scene
-    try {
-        console.log('About to initialize Three.js...');
-        await initThreeJS();
-        console.log('Three.js initialized successfully');
-        
-        // Start render loop
-        animate(state);
-        
-        // Start updating state from orchestrator
-        console.log('Setting up update interval for env', envId);
-        updateInterval = setInterval(async () => {
-            console.log('Update interval tick - checking orchestrator...');
-            if (window.mujocoOrchestrator) {
-                console.log('Orchestrator found, getting state for env', envId);
-                const newState = window.mujocoOrchestrator.getEnvironmentState(envId);
-                console.log('Got state:', newState);
-                if (newState) {
-                    updateRobotPose(newState);
-                } else {
-                    console.log('No state returned for env', envId);
-                }
-            } else {
-                console.log('No orchestrator found on window!');
-            }
-        }, 50); // Update at 20Hz
-    } catch (error) {
-        console.error('Failed to initialize Three.js:', error);
-        alert('Failed to initialize 3D view. Check console for details.');
-    }
+// Make THREE available globally for debugging
+window.THREE = THREE;
+
+// Import model parser
+import { MuJoCoModelParser } from "./mujoco-model-parser.js";
+
+// Coordinate conversion functions
+function mujocoToThreePosition(mjPos) {
+  // MuJoCo uses Z-up, Three.js uses Y-up
+  return {
+    x: mjPos[0],
+    y: mjPos[2], // Z -> Y
+    z: -mjPos[1], // Y -> -Z
+  };
 }
 
-async function initThreeJS() {
-    // Load Three.js from CDN
-    if (!window.THREE) {
-        await loadThreeJS();
+function createThreeMaterial(mjMaterial) {
+  const material = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(
+      mjMaterial.color.r,
+      mjMaterial.color.g,
+      mjMaterial.color.b
+    ),
+    roughness: 0.6,
+    metalness: 0.1,
+    transparent: mjMaterial.opacity < 1,
+    opacity: mjMaterial.opacity,
+  });
+
+  return material;
+}
+
+export async function openEnvironment3D(envId, state) {
+  console.log("openEnvironment3D called with envId:", envId, "state:", state);
+
+  try {
+    console.log("Starting function...");
+
+    if (!state) {
+      console.error("No state provided to openEnvironment3D");
+      return;
     }
-    
-    // Get container
-    const container = document.getElementById('threejs-container');
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    
-    console.log('Initializing Three.js with dimensions:', width, height);
-    
-    // Scene
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x2a2a2a);
-    scene.fog = new THREE.Fog(0x2a2a2a, 10, 50);
-    
-    // Camera
-    camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
-    camera.position.set(2, 2, 3);
-    camera.lookAt(0, 0.5, 0);
-    
-    // Renderer
-    renderer = new THREE.WebGLRenderer({ 
-        antialias: true,
-        powerPreference: "high-performance"
-    });
-    renderer.setSize(width, height);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    container.innerHTML = '';
-    container.appendChild(renderer.domElement);
-    
-    // Controls
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-    controls.minDistance = 1;
-    controls.maxDistance = 10;
-    controls.target.set(0, 0.5, 0);
-    controls.update();
-    
-    // Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambientLight);
-    
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(5, 10, 5);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.camera.near = 0.1;
-    directionalLight.shadow.camera.far = 50;
-    directionalLight.shadow.camera.left = -5;
-    directionalLight.shadow.camera.right = 5;
-    directionalLight.shadow.camera.top = 5;
-    directionalLight.shadow.camera.bottom = -5;
-    scene.add(directionalLight);
-    
-    // Grid helper (XZ plane for Three.js Y-up system)
-    const gridHelper = new THREE.GridHelper(10, 20, 0x444444, 0x333333);
-    scene.add(gridHelper);
-    
-    // Axes helper with labels
-    const axesHelper = new THREE.AxesHelper(2);
-    scene.add(axesHelper);
-    
-    // Add coordinate labels
-    addCoordinateLabels();
-    
-    // Ground plane
-    const groundGeometry = new THREE.PlaneGeometry(10, 10);
-    const groundMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x1a1a1a,
-        roughness: 0.8,
-        metalness: 0.2
-    });
-    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.01;
-    ground.receiveShadow = true;
-    scene.add(ground);
-    
-    // Create robot
-    createHumanoidRobot();
-    
-    // Handle window resize
-    window.addEventListener('resize', onWindowResize);
+
+    console.log("State check passed");
+    console.log("Step 1: Three.js is imported via ES modules");
+
+    currentEnvId = envId;
+
+    // Show modal
+    const modal = document.getElementById("threejs-modal");
+    if (!modal) {
+      console.error("FATAL: Modal element not found!");
+      return;
+    }
+    modal.classList.remove("hidden");
+    console.log("Step 3: Modal shown");
+
+    // Update title
+    document.getElementById(
+      "modal-title"
+    ).textContent = `Environment ${envId} - 3D View`;
+
+    // Wait for modal to be visible and have dimensions
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    console.log("Step 4: Modal ready");
+
+    // Load and parse MuJoCo model first
+    if (!modelData) {
+      console.log("Loading MuJoCo model data...");
+      const parser = new MuJoCoModelParser();
+      try {
+        // Use relative path that's served by the web server
+        modelData = await parser.loadFromXML("/workspace/humanoid.xml");
+        console.log(
+          "✅ Model data loaded successfully! Bodies:",
+          modelData.bodies.length,
+          "Materials:",
+          Object.keys(modelData.materials)
+        );
+        
+
+        // Force using the loaded model data
+        if (!modelData.bodies || modelData.bodies.length === 0) {
+          throw new Error("No bodies found in model data");
+        }
+      } catch (error) {
+        console.error("❌ Failed to load MuJoCo model:", error);
+        throw error; // Just fail instead of falling back
+      }
+    }
+
+    // Initialize Three.js scene
+    try {
+      console.log("About to initialize Three.js...");
+      await initThreeJS(state);
+      console.log("Three.js initialized successfully");
+
+      // Start render loop
+      animate(state);
+
+      // Start updating state from orchestrator
+      console.log("Setting up update interval for env", envId);
+      updateInterval = setInterval(async () => {
+        if (window.mujocoOrchestrator) {
+          const newState = window.mujocoOrchestrator.getEnvironmentState(envId);
+          if (newState) {
+            updateRobotPose(newState);
+          }
+        }
+      }, 50); // Update at 20Hz
+    } catch (error) {
+      console.error("Failed somewhere in initialization:", error);
+      console.error("Error stack:", error.stack);
+      // Don't try to recover, just show the error
+      alert("Failed to open 3D view: " + error.message);
+    }
+  } catch (outerError) {
+    console.error("OUTER ERROR:", outerError);
+    console.error("Stack:", outerError.stack);
+    alert("Critical error: " + outerError.message);
+  }
+}
+
+async function initThreeJS(state) {
+  // Three.js is already imported as ES module
+
+  // Get container
+  const container = document.getElementById("threejs-container");
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+
+  console.log("Initializing Three.js with dimensions:", width, height);
+
+  // Scene setup - match MuJoCo demo atmosphere
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0.15, 0.25, 0.35); // Dark blue background
+  scene.fog = new THREE.Fog(0x263238, 5, 20); // Add fog for atmosphere
+
+  // Camera - position it to see the humanoid better
+  camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
+  camera.position.set(2, 1.5, 3); // Adjusted for humanoid height
+  camera.lookAt(0, 1, 0); // Look at torso height
+
+  // Renderer
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(width, height);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Soft shadows
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.2;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  container.appendChild(renderer.domElement);
+
+  // Controls - OrbitControls is now a global, not part of THREE
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.minDistance = 1;
+  controls.maxDistance = 10;
+  controls.target.set(0, 1, 0); // Target humanoid torso
+  controls.update();
+
+  // Lighting - match MuJoCo demo
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.1); // Very dim ambient
+  scene.add(ambientLight);
+
+  // Main spotlight targeting the robot
+  const spotLight = new THREE.SpotLight(0xffffff, 2);
+  spotLight.position.set(2, 5, 2);
+  spotLight.angle = Math.PI / 6;
+  spotLight.penumbra = 0.3;
+  spotLight.decay = 2;
+  spotLight.distance = 20;
+  spotLight.castShadow = true;
+  spotLight.shadow.mapSize.width = 2048;
+  spotLight.shadow.mapSize.height = 2048;
+  spotLight.shadow.camera.near = 0.5;
+  spotLight.shadow.camera.far = 10;
+  scene.add(spotLight);
+
+  // Helper spotlight for visibility
+  const helperLight = new THREE.DirectionalLight(0xffffff, 0.3);
+  helperLight.position.set(-2, 3, 2);
+  scene.add(helperLight);
+
+  // Ground plane with shadow receiving
+  const groundGeometry = new THREE.PlaneGeometry(10, 10);
+  const groundMaterial = new THREE.ShadowMaterial({
+    opacity: 0.3,
+    color: 0x000000,
+  });
+  const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = 0;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // Add a visible floor for reference
+  const floorGeometry = new THREE.PlaneGeometry(10, 10);
+  const floorMaterial = new THREE.MeshStandardMaterial({
+    color: 0x1a1a1a,
+    roughness: 0.8,
+    metalness: 0.2,
+  });
+  const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.01; // Slightly below shadow plane
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // Create robot
+  createRobot();
+
+  // Target spotlight at robot
+  if (robotGroup) {
+    spotLight.target = robotGroup;
+  }
+
+  // Handle window resize
+  window.addEventListener("resize", onWindowResize);
 }
 
 function loadThreeJS() {
-    return new Promise((resolve, reject) => {
-        // Load Three.js
-        const threeScript = document.createElement('script');
-        threeScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-        threeScript.onload = () => {
-            // Load OrbitControls
-            const orbitScript = document.createElement('script');
-            orbitScript.src = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/controls/OrbitControls.js';
-            orbitScript.onload = resolve;
-            orbitScript.onerror = reject;
-            document.head.appendChild(orbitScript);
-        };
-        threeScript.onerror = reject;
-        document.head.appendChild(threeScript);
-    });
+  return new Promise((resolve) => {
+    // Three.js and OrbitControls are already loaded in the main HTML
+    if (window.THREE) {
+      console.log("Three.js already loaded");
+      resolve();
+    } else {
+      console.error("Three.js not found! Make sure it is loaded in the HTML.");
+      resolve(); // Resolve anyway to avoid blocking
+    }
+  });
 }
 
 function addCoordinateLabels() {
-    // Create sprite labels for axes
-    const loader = new THREE.FontLoader();
-    
-    // For now, use colored boxes to indicate axes
-    // Red = X, Green = Y, Blue = Z
-    const labelGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
-    
-    const xLabel = new THREE.Mesh(labelGeometry, new THREE.MeshBasicMaterial({ color: 0xff0000 }));
-    xLabel.position.set(2.2, 0, 0);
-    scene.add(xLabel);
-    
-    const yLabel = new THREE.Mesh(labelGeometry, new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
-    yLabel.position.set(0, 2.2, 0);
-    scene.add(yLabel);
-    
-    const zLabel = new THREE.Mesh(labelGeometry, new THREE.MeshBasicMaterial({ color: 0x0000ff }));
-    zLabel.position.set(0, 0, 2.2);
-    scene.add(zLabel);
+  // Create sprite labels for axes
+  const loader = new THREE.FontLoader();
+
+  // For now, use colored boxes to indicate axes
+  // Red = X, Green = Y, Blue = Z
+  const labelGeometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+
+  const xLabel = new THREE.Mesh(
+    labelGeometry,
+    new THREE.MeshBasicMaterial({ color: 0xff0000 })
+  );
+  xLabel.position.set(2.2, 0, 0);
+  scene.add(xLabel);
+
+  const yLabel = new THREE.Mesh(
+    labelGeometry,
+    new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+  );
+  yLabel.position.set(0, 2.2, 0);
+  scene.add(yLabel);
+
+  const zLabel = new THREE.Mesh(
+    labelGeometry,
+    new THREE.MeshBasicMaterial({ color: 0x0000ff })
+  );
+  zLabel.position.set(0, 0, 2.2);
+  scene.add(zLabel);
 }
 
-function createHumanoidRobot() {
-    // Create robot group
-    robotGroup = new THREE.Group();
-    robotGroup.position.y = 0;
-    
-    const bodyMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x4a9eff,
-        roughness: 0.5,
-        metalness: 0.3
+function createRobot() {
+  robotGroup = new THREE.Group();
+
+  if (modelData && modelData !== false) {
+    // Create robot from MuJoCo model data
+    console.log("Creating robot from MuJoCo model data...");
+
+    // Create a map to store body groups by name
+    robotGroup.bodyMap = {};
+
+    // Create material from model data
+    const mjBodyMaterial = modelData.materials.body || null;
+    const bodyMaterial = mjBodyMaterial
+      ? createThreeMaterial(mjBodyMaterial)
+      : new THREE.MeshPhysicalMaterial({
+          color: new THREE.Color(0.8, 0.6, 0.4), // Default skin tone
+          roughness: 0.6,
+          metalness: 0.1,
+        });
+
+    // Create groups for each body
+    modelData.bodies.forEach((body) => {
+      if (body.name === "world") return; // Skip world body
+
+      const bodyGroup = new THREE.Group();
+      bodyGroup.name = body.name;
+      bodyGroup.bodyIndex = body.index;
+
+      // Store in map for easy access
+      robotGroup.bodyMap[body.name] = bodyGroup;
+      robotGroup.bodyMap[body.index] = bodyGroup;
+
+      // Create geoms for this body
+      body.geoms.forEach((geom) => {
+        let geometry;
+        let mesh;
+        
+        // Debug log for key body parts
+        if (body.name === "torso" || body.name === "thigh_right" || body.name === "head") {
+          console.log(`Geom in ${body.name}: type=${geom.type}, size=${geom.size}, fromto=${geom.fromto}, pos=${geom.position}`);
+        }
+
+        switch (geom.type) {
+          case "capsule":
+            if (geom.fromto && geom.fromto.length === 6) {
+              // Calculate capsule from fromto points
+              const from = geom.fromto.slice(0, 3);
+              const to = geom.fromto.slice(3, 6);
+              const dx = to[0] - from[0];
+              const dy = to[1] - from[1];
+              const dz = to[2] - from[2];
+              const length = Math.sqrt(dx*dx + dy*dy + dz*dz);
+              const radius = geom.size[0] || 0.046;
+              
+              geometry = new THREE.CapsuleGeometry(radius, length, 8, 16);
+              mesh = new THREE.Mesh(geometry, bodyMaterial);
+              
+              // Position at midpoint
+              const midX = (from[0] + to[0]) / 2;
+              const midY = (from[1] + to[1]) / 2;
+              const midZ = (from[2] + to[2]) / 2;
+              mesh.position.set(midX, midY, midZ);
+              
+              // Rotate to align with fromto vector
+              if (Math.abs(dy) > 0.001) {
+                const up = new THREE.Vector3(0, 1, 0);
+                const dir = new THREE.Vector3(dx, dy, dz).normalize();
+                mesh.quaternion.setFromUnitVectors(up, dir);
+              }
+            } else {
+              // Use size attribute
+              const radius = geom.size[0] || 0.046;
+              const length = geom.size[1] ? geom.size[1] * 2 : 0.3;
+              geometry = new THREE.CapsuleGeometry(radius, length, 8, 16);
+              mesh = new THREE.Mesh(geometry, bodyMaterial);
+              mesh.position.set(geom.position[0], geom.position[1], geom.position[2]);
+            }
+            break;
+          case "sphere":
+            geometry = new THREE.SphereGeometry(geom.size[0] || 0.05, 16, 16);
+            mesh = new THREE.Mesh(geometry, bodyMaterial);
+            mesh.position.set(geom.position[0], geom.position[1], geom.position[2]);
+            break;
+          case "box":
+            geometry = new THREE.BoxGeometry(
+              geom.size[0] * 2 || 0.1,
+              geom.size[1] * 2 || 0.1,
+              geom.size[2] * 2 || 0.1
+            );
+            mesh = new THREE.Mesh(geometry, bodyMaterial);
+            mesh.position.set(geom.position[0], geom.position[1], geom.position[2]);
+            break;
+          default:
+            // Default to sphere
+            geometry = new THREE.SphereGeometry(0.05, 16, 16);
+            mesh = new THREE.Mesh(geometry, bodyMaterial);
+            mesh.position.set(geom.position[0], geom.position[1], geom.position[2]);
+        }
+
+        if (mesh) {
+          // Cast shadows
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          bodyGroup.add(mesh);
+        }
+      });
+
+      // For now, add all bodies directly to robotGroup to debug positioning
+      robotGroup.add(bodyGroup);
+      
+      // Log the body hierarchy for debugging
+      if (body.name === "torso" || body.name === "head" || body.name === "pelvis") {
+        console.log(`Body ${body.name}: parent=${body.parent}, local pos=${body.position}`);
+      }
     });
-    
-    const jointMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0xffffff,
-        roughness: 0.3,
-        metalness: 0.7
-    });
-    
-    // Torso
-    const torsoGeometry = new THREE.BoxGeometry(0.3, 0.5, 0.2);
-    const torso = new THREE.Mesh(torsoGeometry, bodyMaterial);
-    torso.position.y = 1;
-    torso.castShadow = true;
-    torso.receiveShadow = true;
-    robotGroup.add(torso);
-    
-    // Head
-    const headGeometry = new THREE.SphereGeometry(0.15, 16, 16);
-    const head = new THREE.Mesh(headGeometry, bodyMaterial);
-    head.position.y = 1.4;
-    head.castShadow = true;
-    robotGroup.add(head);
-    
-    // Joints (shoulders, hips, elbows, knees)
-    const jointGeometry = new THREE.SphereGeometry(0.05, 8, 8);
-    
-    // Shoulders
-    const leftShoulder = new THREE.Mesh(jointGeometry, jointMaterial);
-    leftShoulder.position.set(-0.2, 1.2, 0);
-    robotGroup.add(leftShoulder);
-    
-    const rightShoulder = new THREE.Mesh(jointGeometry, jointMaterial);
-    rightShoulder.position.set(0.2, 1.2, 0);
-    robotGroup.add(rightShoulder);
-    
-    // Arms
-    const armGeometry = new THREE.CylinderGeometry(0.04, 0.04, 0.3);
-    
-    const leftUpperArm = new THREE.Mesh(armGeometry, bodyMaterial);
-    leftUpperArm.position.set(-0.25, 1.05, 0);
-    leftUpperArm.rotation.z = Math.PI / 8;
-    leftUpperArm.castShadow = true;
-    robotGroup.add(leftUpperArm);
-    
-    const rightUpperArm = new THREE.Mesh(armGeometry, bodyMaterial);
-    rightUpperArm.position.set(0.25, 1.05, 0);
-    rightUpperArm.rotation.z = -Math.PI / 8;
-    rightUpperArm.castShadow = true;
-    robotGroup.add(rightUpperArm);
-    
-    // Hips
-    const leftHip = new THREE.Mesh(jointGeometry, jointMaterial);
-    leftHip.position.set(-0.1, 0.75, 0);
-    robotGroup.add(leftHip);
-    
-    const rightHip = new THREE.Mesh(jointGeometry, jointMaterial);
-    rightHip.position.set(0.1, 0.75, 0);
-    robotGroup.add(rightHip);
-    
-    // Legs
-    const legGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.4);
-    
-    const leftUpperLeg = new THREE.Mesh(legGeometry, bodyMaterial);
-    leftUpperLeg.position.set(-0.1, 0.55, 0);
-    leftUpperLeg.castShadow = true;
-    robotGroup.add(leftUpperLeg);
-    
-    const rightUpperLeg = new THREE.Mesh(legGeometry, bodyMaterial);
-    rightUpperLeg.position.set(0.1, 0.55, 0);
-    rightUpperLeg.castShadow = true;
-    robotGroup.add(rightUpperLeg);
-    
-    // Lower legs
-    const leftLowerLeg = new THREE.Mesh(legGeometry, bodyMaterial);
-    leftLowerLeg.position.set(-0.1, 0.2, 0);
-    leftLowerLeg.castShadow = true;
-    robotGroup.add(leftLowerLeg);
-    
-    const rightLowerLeg = new THREE.Mesh(legGeometry, bodyMaterial);
-    rightLowerLeg.position.set(0.1, 0.2, 0);
-    rightLowerLeg.castShadow = true;
-    robotGroup.add(rightLowerLeg);
-    
-    // Feet
-    const footGeometry = new THREE.BoxGeometry(0.08, 0.04, 0.15);
-    
-    const leftFoot = new THREE.Mesh(footGeometry, bodyMaterial);
-    leftFoot.position.set(-0.1, 0.02, 0.03);
-    leftFoot.castShadow = true;
-    robotGroup.add(leftFoot);
-    
-    const rightFoot = new THREE.Mesh(footGeometry, bodyMaterial);
-    rightFoot.position.set(0.1, 0.02, 0.03);
-    rightFoot.castShadow = true;
-    robotGroup.add(rightFoot);
-    
-    scene.add(robotGroup);
+  } else {
+    throw new Error("No model data available for robot creation");
+  }
+
+  // Enable shadows for the whole group
+  robotGroup.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  scene.add(robotGroup);
+}
+
+function createSimpleRobot() {
+  // Simple fallback robot geometry
+  const bodyMaterial = new THREE.MeshStandardMaterial({
+    color: 0x4a9eff,
+    roughness: 0.5,
+    metalness: 0.3,
+  });
+
+  const jointMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.3,
+    metalness: 0.7,
+  });
+
+  // Torso
+  const torsoGeometry = new THREE.BoxGeometry(0.3, 0.5, 0.2);
+  const torso = new THREE.Mesh(torsoGeometry, bodyMaterial);
+  torso.position.y = 1;
+  torso.castShadow = true;
+  torso.receiveShadow = true;
+  robotGroup.add(torso);
+
+  // Head
+  const headGeometry = new THREE.SphereGeometry(0.15, 16, 16);
+  const head = new THREE.Mesh(headGeometry, bodyMaterial);
+  head.position.y = 1.4;
+  head.castShadow = true;
+  robotGroup.add(head);
+
+  // Joints (shoulders, hips, elbows, knees)
+  const jointGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+
+  // Shoulders
+  const leftShoulder = new THREE.Mesh(jointGeometry, jointMaterial);
+  leftShoulder.position.set(-0.2, 1.2, 0);
+  robotGroup.add(leftShoulder);
+
+  const rightShoulder = new THREE.Mesh(jointGeometry, jointMaterial);
+  rightShoulder.position.set(0.2, 1.2, 0);
+  robotGroup.add(rightShoulder);
+
+  // Arms
+  const armGeometry = new THREE.CylinderGeometry(0.04, 0.04, 0.3);
+
+  const leftUpperArm = new THREE.Mesh(armGeometry, bodyMaterial);
+  leftUpperArm.position.set(-0.25, 1.05, 0);
+  leftUpperArm.rotation.z = Math.PI / 8;
+  leftUpperArm.castShadow = true;
+  robotGroup.add(leftUpperArm);
+
+  const rightUpperArm = new THREE.Mesh(armGeometry, bodyMaterial);
+  rightUpperArm.position.set(0.25, 1.05, 0);
+  rightUpperArm.rotation.z = -Math.PI / 8;
+  rightUpperArm.castShadow = true;
+  robotGroup.add(rightUpperArm);
+
+  // Hips
+  const leftHip = new THREE.Mesh(jointGeometry, jointMaterial);
+  leftHip.position.set(-0.1, 0.75, 0);
+  robotGroup.add(leftHip);
+
+  const rightHip = new THREE.Mesh(jointGeometry, jointMaterial);
+  rightHip.position.set(0.1, 0.75, 0);
+  robotGroup.add(rightHip);
+
+  // Legs
+  const legGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.4);
+
+  const leftUpperLeg = new THREE.Mesh(legGeometry, bodyMaterial);
+  leftUpperLeg.position.set(-0.1, 0.55, 0);
+  leftUpperLeg.castShadow = true;
+  robotGroup.add(leftUpperLeg);
+
+  const rightUpperLeg = new THREE.Mesh(legGeometry, bodyMaterial);
+  rightUpperLeg.position.set(0.1, 0.55, 0);
+  rightUpperLeg.castShadow = true;
+  robotGroup.add(rightUpperLeg);
+
+  // Lower legs
+  const leftLowerLeg = new THREE.Mesh(legGeometry, bodyMaterial);
+  leftLowerLeg.position.set(-0.1, 0.2, 0);
+  leftLowerLeg.castShadow = true;
+  robotGroup.add(leftLowerLeg);
+
+  const rightLowerLeg = new THREE.Mesh(legGeometry, bodyMaterial);
+  rightLowerLeg.position.set(0.1, 0.2, 0);
+  rightLowerLeg.castShadow = true;
+  robotGroup.add(rightLowerLeg);
+
+  // Feet
+  const footGeometry = new THREE.BoxGeometry(0.08, 0.04, 0.15);
+
+  const leftFoot = new THREE.Mesh(footGeometry, bodyMaterial);
+  leftFoot.position.set(-0.1, 0.02, 0.03);
+  leftFoot.castShadow = true;
+  robotGroup.add(leftFoot);
+
+  const rightFoot = new THREE.Mesh(footGeometry, bodyMaterial);
+  rightFoot.position.set(0.1, 0.02, 0.03);
+  rightFoot.castShadow = true;
+  robotGroup.add(rightFoot);
 }
 
 function updateRobotPose(state) {
-    console.log('updateRobotPose called with state:', state);
-    if (!robotGroup || !state || !state.observation) {
-        console.log('Early return - missing:', {robotGroup: !!robotGroup, state: !!state, observation: !!(state?.observation)});
-        return;
-    }
-    
-    // Update robot position from physics
-    if (state.observation.bodyPos) {
-        // MuJoCo uses Z-up, Three.js uses Y-up
-        // So MuJoCo's Z becomes Three.js Y, and MuJoCo's Y becomes Three.js -Z
-        const x = state.observation.bodyPos[0] || 0;
-        const y = state.observation.bodyPos[2] || 0; // Z -> Y
-        const z = -(state.observation.bodyPos[1] || 0); // Y -> -Z
-        
-        // Debug log every 20 updates (1 second)
-        if (Math.random() < 0.05) {
-            console.log('3D Update - MuJoCo pos:', state.observation.bodyPos, '-> Three.js pos:', {x, y, z});
+  if (!robotGroup || !state || !state.observation) {
+    return;
+  }
+
+  // Get body positions and rotations from physics
+  const envState = window.mujocoOrchestrator?.getEnvironmentState(currentEnvId);
+  if (!envState) return;
+
+  // Check if we have access to MuJoCo xpos and xquat data
+  if (
+    envState.observation &&
+    envState.observation.xpos &&
+    envState.observation.xquat
+  ) {
+    // Update each body's position and rotation
+    if (robotGroup.bodyMap) {
+      for (let bodyName in robotGroup.bodyMap) {
+        if (typeof bodyName === "string") {
+          // Skip numeric indices
+          const bodyGroup = robotGroup.bodyMap[bodyName];
+          const bodyIndex = bodyGroup.bodyIndex;
+
+          if (
+            bodyIndex &&
+            envState.observation.xpos &&
+            envState.observation.xquat
+          ) {
+            // Get position from xpos array (3 values per body)
+            // Use the same coordinate conversion as the original demo
+            const posIndex = bodyIndex * 3;
+            if (posIndex + 2 < envState.observation.xpos.length) {
+              bodyGroup.position.set(
+                envState.observation.xpos[posIndex],      // X stays X
+                envState.observation.xpos[posIndex + 2],  // Z -> Y
+                -envState.observation.xpos[posIndex + 1]  // Y -> -Z
+              );
+            }
+
+            // Get quaternion from xquat array (4 values per body)
+            const quatIndex = bodyIndex * 4;
+            if (quatIndex + 3 < envState.observation.xquat.length) {
+              // Match the original demo's quaternion conversion
+              // MuJoCo: [w, x, y, z], Three.js also uses [x, y, z, w] but with swizzling
+              bodyGroup.quaternion.set(
+                -envState.observation.xquat[quatIndex + 1],  // -x
+                -envState.observation.xquat[quatIndex + 3],  // -z -> y
+                envState.observation.xquat[quatIndex + 2],   // y -> z
+                -envState.observation.xquat[quatIndex]        // -w
+              );
+            }
+          }
         }
-        
-        robotGroup.position.set(x, y, z);
+      }
     }
-    
-    // Check if robot has fallen (torso height < 0.1m in MuJoCo coordinates)
-    const torsoHeight = state.observation.bodyPos ? state.observation.bodyPos[2] : 1.282;
-    if (torsoHeight < 0.1) {
-        // Robot has fallen - lay it on the ground
-        robotGroup.rotation.x = Math.PI / 2; // Rotate to lying position
-        robotGroup.position.y = Math.max(0.1, robotGroup.position.y); // Keep above ground
-    } else {
-        // Robot is standing
-        robotGroup.rotation.x = 0;
+  } else {
+    // Fallback to simple position update if full body data not available
+    if (state.observation.bodyPos) {
+      console.log("Updating robot position:", state.observation.bodyPos);
+
+      // Convert MuJoCo coordinates to Three.js
+      const mjPos = state.observation.bodyPos;
+      const threePos = mujocoToThreePosition(mjPos);
+
+      robotGroup.position.x = threePos.x;
+      robotGroup.position.y = threePos.y;
+      robotGroup.position.z = threePos.z;
     }
-    
-    // TODO: Update individual joint rotations from qpos data
+  }
+
+  // Check if robot has fallen
+  const torsoHeight = state.observation.bodyPos
+    ? state.observation.bodyPos[2]
+    : 1;
+  if (torsoHeight < 0.1) {
+    console.log("Robot has fallen! Torso height:", torsoHeight);
+  }
 }
 
 function animate(state) {
-    animationId = requestAnimationFrame(() => animate(state));
-    
-    // Update controls
-    if (controls) {
-        controls.update();
-    }
-    
-    // No more fake rotation - pose is updated by updateRobotPose()
-    
-    // Render
-    if (renderer && scene && camera) {
-        renderer.render(scene, camera);
-    }
+  animationId = requestAnimationFrame(() => animate(state));
+
+  // Update controls
+  if (controls) {
+    controls.update();
+  }
+
+  // No more fake rotation - pose is updated by updateRobotPose()
+
+  // Render
+  if (renderer && scene && camera) {
+    renderer.render(scene, camera);
+  }
 }
 
 function onWindowResize() {
-    const container = document.getElementById('threejs-container');
-    if (!container) return;
-    
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    
-    if (camera) {
-        camera.aspect = width / height;
-        camera.updateProjectionMatrix();
-    }
-    
-    if (renderer) {
-        renderer.setSize(width, height);
-    }
+  const container = document.getElementById("threejs-container");
+  if (!container) return;
+
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+
+  if (camera) {
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  }
+
+  if (renderer) {
+    renderer.setSize(width, height);
+  }
 }
 
 // Clean up when modal closes
 export function closeModal() {
-    if (animationId) {
-        cancelAnimationFrame(animationId);
-        animationId = null;
-    }
-    
-    if (updateInterval) {
-        clearInterval(updateInterval);
-        updateInterval = null;
-    }
-    
-    // Clean up Three.js resources
-    if (renderer) {
-        renderer.dispose();
-        renderer = null;
-    }
-    
-    if (scene) {
-        // Dispose of geometries and materials
-        scene.traverse((object) => {
-            if (object.geometry) object.geometry.dispose();
-            if (object.material) {
-                if (Array.isArray(object.material)) {
-                    object.material.forEach(material => material.dispose());
-                } else {
-                    object.material.dispose();
-                }
-            }
-        });
-        scene = null;
-    }
-    
-    camera = null;
-    controls = null;
-    robotGroup = null;
-    currentEnvId = null;
-    
-    // Hide modal
-    document.getElementById('threejs-modal').classList.add('hidden');
+  if (animationId) {
+    cancelAnimationFrame(animationId);
+    animationId = null;
+  }
+
+  if (updateInterval) {
+    clearInterval(updateInterval);
+    updateInterval = null;
+  }
+
+  // Clean up Three.js resources
+  if (renderer) {
+    renderer.dispose();
+    renderer = null;
+  }
+
+  if (scene) {
+    // Dispose of geometries and materials
+    scene.traverse((object) => {
+      if (object.geometry) object.geometry.dispose();
+      if (object.material) {
+        if (Array.isArray(object.material)) {
+          object.material.forEach((material) => material.dispose());
+        } else {
+          object.material.dispose();
+        }
+      }
+    });
+    scene = null;
+  }
+
+  camera = null;
+  controls = null;
+  robotGroup = null;
+  currentEnvId = null;
+  
+  // Reset modelData so it reloads fresh each time
+  modelData = null;
+
+  // Hide modal
+  document.getElementById("threejs-modal").classList.add("hidden");
 }

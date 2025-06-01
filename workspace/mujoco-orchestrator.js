@@ -215,7 +215,8 @@ class MuJoCoRLOrchestrator {
                 env.observation.bodyPos[0] || 0,
                 env.observation.bodyPos[1] || 0,
                 env.observation.bodyPos[2] || 0
-            ] : [0, 0, 0]
+            ] : [0, 0, 0],
+            qpos: env.observation && env.observation.qpos ? env.observation.qpos : null
         };
     }
     
