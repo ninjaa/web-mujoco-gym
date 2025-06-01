@@ -271,4 +271,7 @@ function getHeatmapColor(value) {
     }
 }
 
-export { drawCoordinateAxes, drawStickFigure, getHeatmapColor };
+// Make functions available globally
+window.drawCoordinateAxes = drawCoordinateAxes;
+window.drawStickFigure = drawStickFigure;
+window.getHeatmapColor = getHeatmapColor;
