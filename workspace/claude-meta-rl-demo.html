@@ -721,7 +721,7 @@ POLICY_UPDATES:
 
 Be specific with numbers that will lead to convergence.`;
 
-            const response = await fetch('https://api.anthropic.com/v1/messages', {
+            const response = await fetch('http://localhost:3001/claude', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

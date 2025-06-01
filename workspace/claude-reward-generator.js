@@ -6,8 +6,8 @@
 class ClaudeRewardGenerator {
     constructor(apiKey) {
         this.apiKey = apiKey;
-        // Use a CORS proxy for demo
-        this.baseURL = 'https://cors-anywhere.herokuapp.com/https://api.anthropic.com/v1/messages';
+        // Use local proxy to bypass CORS
+        this.baseURL = 'http://localhost:3001/claude';
         this.model = 'claude-opus-4-20250514';
         
         // Cache generated functions
