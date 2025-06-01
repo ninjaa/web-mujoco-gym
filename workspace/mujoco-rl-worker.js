@@ -20,7 +20,7 @@ self.onmessage = async function(e) {
                 
             case 'step':
                 if (simulation) {
-                    stepSimulation(data.actions);
+                    stepSimulation(data);
                 } else {
                     throw new Error('Simulation not initialized');
                 }
@@ -28,7 +28,7 @@ self.onmessage = async function(e) {
                 
             case 'reset':
                 if (simulation) {
-                    resetEnvironment();
+                    resetEnvironment(data);
                 } else {
                     throw new Error('Simulation not initialized');
                 }
@@ -36,7 +36,7 @@ self.onmessage = async function(e) {
                 
             case 'getState':
                 if (simulation) {
-                    getEnvironmentState();
+                    getEnvironmentState(data);
                 } else {
                     throw new Error('Simulation not initialized');
                 }
@@ -46,7 +46,7 @@ self.onmessage = async function(e) {
         self.postMessage({
             type: 'error',
             data: {
-                envId: data.envId || 0,
+                envId: data ? data.envId : 0,
                 error: error.message || 'Unknown error'
             }
         });
@@ -95,7 +95,7 @@ async function initializeMuJoCo(config) {
         envConfig = config;
         
         // Initialize environment state
-        resetEnvironment();
+        resetEnvironment({ envId: config.envId });
         
         self.postMessage({
             type: 'initialized',
@@ -197,8 +197,10 @@ function createModelXML(envType) {
     return models[envType] || models['pendulum'];
 }
 
-function stepSimulation(actions) {
+function stepSimulation(data) {
     if (!simulation || !model) return;
+    
+    const { actions, envId } = data || {};
     
     // Ensure envState is initialized
     if (!envState) {
@@ -214,7 +216,6 @@ function stepSimulation(actions) {
         if (actions && actions.length > 0) {
             // The humanoid has 21 actuators
             const numActuators = model.nu;
-            console.log(`Applying ${actions.length} actions to ${numActuators} actuators`);
             
             for (let i = 0; i < Math.min(actions.length, numActuators); i++) {
                 simulation.ctrl[i] = actions[i];
@@ -232,11 +233,6 @@ function stepSimulation(actions) {
             return;
         }
         
-        // Log position occasionally
-        if (envState.stepCount % 100 === 0) {
-            console.log(`Step ${envState.stepCount}: Position = ${observation.position}`);
-        }
-        
         // Calculate reward (simple forward progress reward for now)
         const reward = calculateReward();
         
@@ -250,7 +246,7 @@ function stepSimulation(actions) {
         self.postMessage({
             type: 'step',
             data: {
-                envId: envConfig.envId,
+                envId: envId || envConfig?.envId || 0,
                 observation: observation,
                 reward: reward,
                 done: done,
@@ -265,7 +261,7 @@ function stepSimulation(actions) {
         self.postMessage({
             type: 'error',
             data: {
-                envId: envConfig.envId,
+                envId: envId || envConfig?.envId || 0,
                 error: error.message
             }
         });
@@ -377,33 +373,34 @@ function checkDone() {
     }
 }
 
-function resetEnvironment() {
+function resetEnvironment(data) {
     if (!simulation) return;
+    
+    const envId = data ? data.envId : (envConfig ? envConfig.envId : 0);
     
     // Reset simulation
     simulation.resetData();
     simulation.forward();
     
-    // Reset environment state
+    // Reset state tracking
     envState = {
         stepCount: 0,
         totalReward: 0,
         lastX: 0
     };
     
-    // Get initial observation
     const observation = getObservation();
     
     self.postMessage({
         type: 'reset',
         data: {
-            envId: envConfig.envId,
+            envId: envId,
             observation: observation
         }
     });
 }
 
-function getEnvironmentState() {
+function getEnvironmentState(data) {
     if (!simulation) return;
     
     const observation = getObservation();
@@ -411,7 +408,7 @@ function getEnvironmentState() {
     self.postMessage({
         type: 'state',
         data: {
-            envId: envConfig.envId,
+            envId: data.envId || envConfig.envId || 0,
             observation: observation,
             info: envState
         }
