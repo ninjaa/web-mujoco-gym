@@ -6,8 +6,9 @@
 class ClaudeRewardGenerator {
     constructor(apiKey) {
         this.apiKey = apiKey;
-        this.baseURL = 'https://api.anthropic.com/v1/messages';
-        this.model = 'claude-3-opus-20240229';
+        // Use a CORS proxy for demo
+        this.baseURL = 'https://cors-anywhere.herokuapp.com/https://api.anthropic.com/v1/messages';
+        this.model = 'claude-opus-4-20250514';
         
         // Cache generated functions
         this.rewardCache = new Map();
@@ -58,6 +59,8 @@ class ClaudeRewardGenerator {
         const isDancing = task.includes('dance') || task.includes('silly') || task.includes('fun');
         const isBalancing = task.includes('balance') || task.includes('stand') || task.includes('upright');
         const isJumping = task.includes('jump') || task.includes('hop') || task.includes('leap');
+        const isSpeed = task.includes('speed') || task.includes('fast') || task.includes('velocity');
+        const isEfficient = task.includes('efficient') || task.includes('energy');
         
         // Generate appropriate reward function
         if (isWalking) {

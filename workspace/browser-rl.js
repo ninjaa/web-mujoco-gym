@@ -311,11 +311,32 @@ class BrowserRL {
         // Normalize returns for stable learning
         const mean = returns.reduce((a, b) => a + b) / returns.length;
         const std = Math.sqrt(returns.map(r => (r - mean) ** 2).reduce((a, b) => a + b) / returns.length) + 1e-8;
-        const normalizedReturns = returns.map(r => (r - mean) / (std + 1e-8));
+        const normalizedReturns = returns.map(r => (r - mean) / std);
         
-        // Simple policy gradient update
-        const avgGradient = normalizedReturns.reduce((a, b) => a + b) / returns.length;
-        this.policy.updateWeights(avgGradient, this.learningRate);
+        // Better gradient estimation - use sign of advantage
+        let updateSignal = 0;
+        normalizedReturns.forEach((ret, i) => {
+            // Positive return = good trajectory = positive gradient
+            // Negative return = bad trajectory = negative gradient
+            updateSignal += ret;
+        });
+        updateSignal /= normalizedReturns.length;
+        
+        // Adaptive learning rate based on performance
+        let adaptiveLR = this.learningRate;
+        if (mean < -100) {
+            // Really bad performance - bigger steps
+            adaptiveLR *= 2.0;
+        } else if (mean > 0) {
+            // Good performance - smaller steps to fine-tune
+            adaptiveLR *= 0.5;
+        }
+        
+        // Update with momentum for stability
+        if (!this.momentum) this.momentum = 0;
+        this.momentum = 0.9 * this.momentum + 0.1 * updateSignal;
+        
+        this.policy.updateWeights(this.momentum, adaptiveLR);
     }
     
     async trainMultipleEpisodes(orchestrator, rewardFn, numEpisodes = 10) {

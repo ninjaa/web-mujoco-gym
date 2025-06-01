@@ -144,10 +144,53 @@ class OptimizedOrchestrator {
     }
     
     getAction(envId) {
-        // Override this method to use a trained policy
-        // For now, return random actions
+        // Check if we have a trained policy
+        if (window.trainedPolicyNetwork) {
+            const state = this.environmentStates.get(envId);
+            if (state && state.observation) {
+                // Convert observation to policy input format
+                const stateVec = this.observationToVector(state.observation);
+                
+                // Get action from trained policy
+                const action = window.trainedPolicyNetwork.forward(stateVec);
+                
+                // Add small exploration noise for variety
+                return action.map(a => {
+                    const noise = (Math.random() - 0.5) * 0.05;
+                    return Math.max(-1, Math.min(1, a + noise));
+                });
+            }
+        }
+        
+        // Fallback to random actions
         const numActions = 21; // Humanoid has 21 actuators
         return Array.from({length: numActions}, () => (Math.random() - 0.5) * 0.4);
+    }
+    
+    observationToVector(obs) {
+        const vec = [];
+        
+        if (obs.bodyPos) vec.push(...obs.bodyPos.slice(0, 3));
+        else vec.push(0, 0, 0);
+        
+        if (obs.bodyVel) vec.push(...obs.bodyVel.slice(0, 3)); 
+        else if (obs.qvel) vec.push(...obs.qvel.slice(0, 3));
+        else vec.push(0, 0, 0);
+        
+        if (obs.qpos) {
+            vec.push(...obs.qpos.slice(7, 28));
+        } else {
+            vec.push(...new Array(21).fill(0));
+        }
+        
+        if (obs.qvel) {
+            vec.push(...obs.qvel.slice(6, 27));
+        } else {
+            vec.push(...new Array(21).fill(0));
+        }
+        
+        while (vec.length < 72) vec.push(0);
+        return vec.slice(0, 72);
     }
     
     handleWorkerMessage(workerId, event) {

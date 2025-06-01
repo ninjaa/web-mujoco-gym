@@ -3,13 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Claude Meta-RL: AI Training AI</title>
+    <title>TabRL: AI Training AI in your Browser Tab</title>
     
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <script src="./mujoco-orchestrator-v3.js"></script>
     <script src="./browser-rl.js"></script>
     <script src="./visualization-2d.js"></script>
-    <script src="./claude-config.js"></script>
+    <script src="./claude-reward-generator.js"></script>
+    <script src="./claude-config.js?v=2"></script>
     
     <style>
         body {
@@ -156,8 +157,8 @@
 </head>
 <body>
     <div class="header">
-        <h1>🤖 Claude Meta-RL: AI Training AI</h1>
-        <p>Watch Claude optimize multiple RL policies simultaneously through iterative meta-learning</p>
+        <h1>🤖 TabRL: AI Training AI in your Browser Tab</h1>
+        <p>LLM-guided reinforcement learning with iterative meta-learning - all in your browser!</p>
     </div>
 
     <div class="iteration-counter">
@@ -171,6 +172,19 @@
         <button id="stopTraining" onclick="stopTraining()" disabled>
             ⏹️ Stop
         </button>
+        <button id="exportWinner" onclick="exportWinningPolicy()" disabled>
+            💾 Export Winner
+        </button>
+        <label style="margin-left: 20px; color: #74b3ff;">
+            Episodes/iteration:
+            <select id="episodesPerIteration" style="background: rgba(0,0,0,0.3); color: #74b3ff; border: 1px solid #4a9eff; padding: 5px; border-radius: 5px;">
+                <option value="10">10 (Quick demo - 5% success)</option>
+                <option value="50" selected>50 (Moderate - 20% success)</option>
+                <option value="100">100 (Better - 40% success)</option>
+                <option value="200">200 (Good - 60% success)</option>
+                <option value="500">500 (Realistic - 80% success)</option>
+            </select>
+        </label>
         <span id="apiStatus" style="margin-left: 20px; font-size: 14px; color: #888;">
             <!-- API status will be shown here -->
         </span>
@@ -257,7 +271,11 @@ Ready to begin! 🎯
             
             // Check API status
             const apiStatus = document.getElementById('apiStatus');
-            if (window.CLAUDE_CONFIG && window.CLAUDE_CONFIG.apiKey !== 'YOUR_ANTHROPIC_API_KEY_HERE') {
+            console.log('Checking Claude config:', window.CLAUDE_CONFIG);
+            console.log('API Key exists:', window.CLAUDE_CONFIG?.apiKey ? 'Yes' : 'No');
+            console.log('API Key is placeholder:', window.CLAUDE_CONFIG?.apiKey === 'YOUR_ANTHROPIC_API_KEY_HERE');
+            
+            if (window.CLAUDE_CONFIG && window.CLAUDE_CONFIG.apiKey && window.CLAUDE_CONFIG.apiKey !== 'YOUR_ANTHROPIC_API_KEY_HERE') {
                 apiStatus.innerHTML = '✅ Claude API configured';
                 apiStatus.style.color = '#22c55e';
             } else {
@@ -352,14 +370,19 @@ Ready to begin! 🎯
             
             document.getElementById('startMetaTraining').disabled = false;
             document.getElementById('stopTraining').disabled = true;
+            document.getElementById('exportWinner').disabled = false;
         }
 
         async function runMetaIteration(iteration) {
             const analysisDiv = document.getElementById('analysisText');
             
-            analysisDiv.textContent = `🔄 Meta-Iteration ${iteration + 1} Starting...
+            analysisDiv.textContent = `🔄 Meta-Iteration ${iteration + 1} Starting...`;
 
-Generating ${window.metaState.policyConfigs.length} diverse reward functions...`;
+            // Initialize Claude generator if needed
+            if (!window.metaState.claudeGenerator) {
+                const apiKey = window.CLAUDE_CONFIG?.apiKey;
+                window.metaState.claudeGenerator = new ClaudeRewardGenerator(apiKey);
+            }
 
             // Create policies and orchestrators
             window.metaState.policies = [];
@@ -382,13 +405,20 @@ Generating ${window.metaState.policyConfigs.length} diverse reward functions...`
                 setupPolicyVisualization(i);
             }
             
-            // Generate reward functions
-            const rewardFunctions = generateDiverseRewardFunctions();
+            // Generate reward functions using Claude or diverse strategies
+            analysisDiv.textContent += '\n\n🧠 Generating reward functions...';
+            const rewardFunctions = await generateClaudeGuidedRewardFunctions(iteration);
             
             // Train all policies in parallel
             analysisDiv.textContent += `\n\n⚡ Training ${window.metaState.policies.length} policies in parallel...`;
             
-            await trainPoliciesInParallel(rewardFunctions, 10); // 10 episodes each
+            // Get episodes from UI
+            const episodesSelect = document.getElementById('episodesPerIteration');
+            const episodesPerPolicy = parseInt(episodesSelect.value);
+            
+            analysisDiv.textContent += `\n(${episodesPerPolicy} episodes per policy)`;
+            
+            await trainPoliciesInParallel(rewardFunctions, episodesPerPolicy);
             
             // Compare results
             const performances = window.metaState.policies.map((p, i) => ({
@@ -407,6 +437,45 @@ Generating ${window.metaState.policyConfigs.length} diverse reward functions...`
 ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).join('\n')}`;
         }
 
+        async function generateClaudeGuidedRewardFunctions(iteration) {
+            const rewards = [];
+            
+            // If no real Claude API, fall back to diverse functions
+            if (!window.CLAUDE_CONFIG || window.CLAUDE_CONFIG.apiKey === 'YOUR_ANTHROPIC_API_KEY_HERE') {
+                return generateDiverseRewardFunctions();
+            }
+            
+            // Use Claude to generate reward functions based on iteration learnings
+            for (let i = 0; i < window.metaState.policyConfigs.length; i++) {
+                const config = window.metaState.policyConfigs[i];
+                
+                // Create task description based on config and iteration
+                let taskDescription = `Make a humanoid robot ${config.rewardFocus}`;
+                
+                if (iteration > 0) {
+                    // Add learnings from previous iteration
+                    taskDescription += `. Previous attempt showed that ${
+                        config.learningRate > 0.01 ? 'high learning rates cause instability' : 'low learning rates are too slow'
+                    }. Adjust reward to be more ${
+                        config.rewardFocus === 'forward velocity' ? 'speed-focused but stable' :
+                        config.rewardFocus === 'upright stability' ? 'balance-focused with some movement' :
+                        'efficient'
+                    }.`;
+                }
+                
+                try {
+                    const rewardFn = await window.metaState.claudeGenerator.generateReward(taskDescription);
+                    rewards.push(rewardFn);
+                } catch (error) {
+                    console.error('Claude generation failed:', error);
+                    // Fallback to hardcoded
+                    rewards.push(generateDiverseRewardFunctions()[i]);
+                }
+            }
+            
+            return rewards;
+        }
+        
         function generateDiverseRewardFunctions() {
             return window.metaState.policyConfigs.map(config => {
                 let rewardCode = '';
@@ -634,12 +703,23 @@ Policy "${p.config.name}":
 - Recent rewards: ${p.rewardHistory.map(r => r.toFixed(1)).join(', ')}
 `).join('\n')}
 
-Based on these results, provide:
-1. A brief analysis of why the winning policy performed best
-2. Specific hyperparameter adjustments for the next iteration
-3. Reward function modifications to improve learning
+Based on these results:
 
-Keep your response concise and actionable.`;
+1. Identify which approach is working best and why
+2. For each policy, suggest SPECIFIC changes:
+   - If rewards are negative: "Reduce fall penalty from X to Y"
+   - If not improving: "Increase learning rate from X to Y"
+   - If unstable: "Add stability bonus of X points"
+3. Provide exact hyperparameter values for next iteration
+
+Format your response as:
+ANALYSIS: [brief explanation]
+POLICY_UPDATES:
+- Speed Demon: lr=0.015, add velocity cap at 2.0 m/s
+- Balance Master: lr=0.008, increase height bonus to 3.0
+[etc]
+
+Be specific with numbers that will lead to convergence.`;
 
             const response = await fetch('https://api.anthropic.com/v1/messages', {
                 method: 'POST',
@@ -691,27 +771,46 @@ ${improvements.map((imp, i) => `${i+1}. ${imp}`).join('\n')}`;
         }
         
         function applyClaudeSuggestions(performances, analysis) {
-            // Parse Claude's suggestions and apply them
-            // This is a simplified version - in reality you'd parse the specific suggestions
-            
-            // Look for learning rate suggestions
-            if (analysis.includes('increase learning rate')) {
-                performances.forEach(p => {
-                    if (p.avgReward < 0) {
-                        p.config.learningRate *= 1.5;
-                    }
-                });
+            // Parse Claude's POLICY_UPDATES section
+            const updatesMatch = analysis.match(/POLICY_UPDATES:([\s\S]*?)(?:\n\n|$)/);
+            if (!updatesMatch) {
+                // Fallback to heuristic
+                applyImprovements(performances, []);
+                return;
             }
             
-            if (analysis.includes('decrease learning rate')) {
-                performances.forEach(p => {
-                    if (p.avgReward > -100) {
-                        p.config.learningRate *= 0.8;
-                    }
-                });
-            }
+            const updates = updatesMatch[1].trim().split('\n');
             
-            // Apply general improvements
+            // Parse each policy update
+            updates.forEach(update => {
+                // Match pattern like "- Speed Demon: lr=0.015, add velocity cap at 2.0 m/s"
+                const policyMatch = update.match(/- (.*?):\s*(.*)/);
+                if (!policyMatch) return;
+                
+                const policyName = policyMatch[1].trim();
+                const changes = policyMatch[2];
+                
+                // Find the matching policy
+                const perf = performances.find(p => p.config.name === policyName);
+                if (!perf) return;
+                
+                // Parse learning rate
+                const lrMatch = changes.match(/lr=(\d+\.?\d*)/);
+                if (lrMatch) {
+                    perf.config.learningRate = parseFloat(lrMatch[1]);
+                }
+                
+                // Parse exploration noise
+                const noiseMatch = changes.match(/noise=(\d+\.?\d*)/);
+                if (noiseMatch) {
+                    perf.config.explorationNoise = parseFloat(noiseMatch[1]);
+                }
+                
+                // Store other suggestions for reward function generation
+                perf.config.claudeSuggestions = changes;
+            });
+            
+            // Also apply general heuristics
             applyImprovements(performances, []);
         }
 
@@ -775,6 +874,41 @@ Key Insights:
             
             document.getElementById('startMetaTraining').disabled = false;
             document.getElementById('stopTraining').disabled = true;
+        }
+        
+        function exportWinningPolicy() {
+            // Find best performing policy
+            const performances = window.metaState.policies.map((p, i) => ({
+                index: i,
+                policy: p,
+                config: window.metaState.policyConfigs[i],
+                avgReward: p.rewardHistory.slice(-10).reduce((a,b) => a+b, 0) / 10
+            }));
+            
+            performances.sort((a, b) => b.avgReward - a.avgReward);
+            const winner = performances[0];
+            
+            // Export the policy
+            const exportData = {
+                policyName: winner.config.name,
+                avgReward: winner.avgReward,
+                config: winner.config,
+                network: winner.policy.policy.serialize(),
+                timestamp: new Date().toISOString()
+            };
+            
+            // Save to localStorage for easy loading in multi-env-demo
+            localStorage.setItem('trainedPolicy', JSON.stringify(exportData));
+            
+            // Also download as file
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `policy-${winner.config.name}-${Date.now()}.json`;
+            a.click();
+            
+            alert(`Exported "${winner.config.name}" policy with avg reward: ${winner.avgReward.toFixed(2)}\n\nSaved to localStorage and downloaded as file.`);
         }
     </script>
 </body>
