@@ -73,6 +73,32 @@ window.CLAUDE_CONFIG = {
 │ Env 1-20│      │Env 21-40│    │   ...   │
 └─────────┘      └─────────┘    └─────────┘
 ```
+## MuJoCo RL Policy Learning Architecture & Convergence
+
+```
++------------------------------+     s_t     +---------------------------------+     Gradients     +---------------------------------+
+|     MuJoCo Environment       |-----------> |    RL Agent (Actor-Critic)      |-----------------> |    Training & Convergence       |
+|                              |             |                                 |                   |                                 |
+| - Physics Engine (MuJoCo)    | <---------- | - Actor Network pi(a|s)         |                   | - Policy Gradient Update        |
+| - Task (e.g., Walk)          |  Action a_t |   (Policy Params θ,             |                   |   (θ ← θ + α∇J(θ),             |
+| - Reward Function            |             |    Action Distribution)         |                   |    Φ ← Φ + β∇L(Φ))             |
+| - State/Observation          | <---------- | - Critic Network V(s)           |                   | - Loss Functions                |
+|   (joint pos, vel, etc.)     |  Reward r_t |   (Value Params Φ, State Value) |                   |   (Policy Loss, Value Loss,     |
+|                              |             | - Algorithm Options             |                   |    Entropy Loss)                |
+|                              |             |   (PPO, SAC, A3C/A2C, etc.)     |                   | - Convergence Metrics           |
+|                              |             | - Experience Buffer/Replay      |                   |   (Avg Episode Return,          |
+|                              |             |   (s, a, r, s', done)           |                   |    Policy Loss Reduction, etc.) |
++------------------------------+             +---------------------------------+                   +---------------------------------+
+```
+
+## Modular Design (v2)
+The latest refactor splits functionality into focused modules:
+- `mujoco-orchestrator.js` - Manages worker pool and environment distribution
+- `mujoco-rl-worker-v2.js` - Runs MuJoCo physics in Web Workers
+- `ui-controls.js` - UI state management and render loop
+- `visualization-2d.js` - 2D stick figure rendering
+- `threejs-modal.js` - 3D visualization popup (click any environment)
+
 
 ### Key Components
 - **mujoco-orchestrator-v3.js** - Manages worker pool and environment distribution
