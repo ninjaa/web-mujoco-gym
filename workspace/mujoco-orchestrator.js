@@ -96,7 +96,8 @@ class MuJoCoRLOrchestrator {
             case 'step_result':
                 // Extract envId from data
                 const stepEnvId = data?.envId;
-                console.log(`Received step result for env ${stepEnvId}:`, data);
+                // Remove verbose logging - too noisy
+                // console.log(`Received step result for env ${stepEnvId}:`, data);
                 
                 if (stepEnvId !== undefined) {
                     const env = this.environments[stepEnvId];

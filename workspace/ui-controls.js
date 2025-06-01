@@ -125,13 +125,11 @@ export async function renderLoop() {
             ] : [0, 0, 0]
         }));
         
-        console.log('First env state after delay:', updatedStates[0]); // Debug log
-        
         // Update visualizations
         const { drawStickFigure, drawCoordinateAxes } = await import('./visualization-2d.js');
         
-        updatedStates.forEach((envState, idx) => {
-            const canvas = document.getElementById(`env-canvas-${idx}`);
+        updatedStates.forEach((envState) => {
+            const canvas = document.getElementById(`env-canvas-${envState.id}`);
             if (!canvas) return;
             
             const ctx = canvas.getContext('2d');
@@ -209,23 +207,20 @@ export async function renderLoop() {
             ctx.restore();
             
             // Update metrics display
-            const envDiv = document.getElementById(`env-${idx}`);
-            if (envDiv) {
-                const rewardEl = envDiv.querySelector('.metric-value');
-                const stepsEl = envDiv.querySelectorAll('.metric-value')[1];
-                const posEl = envDiv.querySelectorAll('.metric-value')[2];
-                
-                if (rewardEl) rewardEl.textContent = envState.reward ? envState.reward.toFixed(2) : '0.00';
-                if (stepsEl) stepsEl.textContent = envState.stepCount || 0;
-                if (posEl && envState.position) {
-                    // Show x, y, z position
-                    posEl.textContent = `${envState.position[0].toFixed(2)}, ${envState.position[1].toFixed(2)}, ${envState.position[2].toFixed(2)}`;
-                }
+            const rewardEl = document.getElementById(`reward-${envState.id}`);
+            const stepEl = document.getElementById(`step-${envState.id}`);
+            const posEl = document.getElementById(`pos-${envState.id}`);
+            
+            if (rewardEl) rewardEl.textContent = envState.reward ? envState.reward.toFixed(2) : '0.00';
+            if (stepEl) stepEl.textContent = envState.stepCount || 0;
+            if (posEl && envState.position) {
+                // Show x, y, z position
+                posEl.textContent = `${envState.position[0].toFixed(2)}, ${envState.position[1].toFixed(2)}, ${envState.position[2].toFixed(2)}`;
             }
             
             // Update action visualizer if in debug mode
-            if (state.debugMode && envState.observation?.actions) {
-                updateActionVisualizer(idx, envState.observation.actions);
+            if (state.debugMode && envState.observation && envState.observation.actions) {
+                updateActionVisualizer(envState.id, envState.observation.actions);
             }
         });
         
@@ -297,6 +292,9 @@ export function createEnvironmentDisplays(numEnvs) {
             </div>
             <div class="action-viz ${state.debugMode ? 'show' : ''}" id="action-viz-${i}">
                 <div class="action-header">Actions</div>
+                <div class="action-bars" id="action-bars-${i}">
+                    <!-- Action bars will be populated dynamically -->
+                </div>
             </div>
         `;
         
@@ -307,10 +305,15 @@ export function createEnvironmentDisplays(numEnvs) {
         if (canvas) {
             canvas.style.cursor = 'pointer';
             canvas.addEventListener('click', () => {
+                console.log(`Canvas ${i} clicked`);
                 if (state.orchestrator && state.orchestrator.environments[i]) {
                     import('./threejs-modal.js').then(module => {
                         module.show3DModal(i, state.orchestrator.environments[i]);
+                    }).catch(err => {
+                        console.error('Failed to load threejs-modal:', err);
                     });
+                } else {
+                    console.log('No orchestrator or environment', state.orchestrator, i);
                 }
             });
         }
@@ -348,12 +351,38 @@ export function updatePerformanceChart() {
         ctx.lineWidth = 2;
         ctx.beginPath();
         
-        const maxReward = Math.max(...state.perfData.rewards, 1);
+        // Handle negative rewards
+        const minReward = Math.min(...state.perfData.rewards, 0);
+        const maxReward = Math.max(...state.perfData.rewards, 0.1);
+        const range = maxReward - minReward;
         const xStep = (canvas.width - 60) / (state.perfData.rewards.length - 1);
+        
+        // Draw zero line if we have negative values
+        if (minReward < 0) {
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            const zeroY = canvas.height - 30 - ((-minReward) / range) * (canvas.height - 50);
+            ctx.moveTo(40, zeroY);
+            ctx.lineTo(canvas.width - 20, zeroY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Zero label
+            ctx.fillStyle = '#666';
+            ctx.font = '10px sans-serif';
+            ctx.fillText('0', 25, zeroY + 3);
+        }
+        
+        // Draw reward line
+        ctx.strokeStyle = '#4a9eff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
         
         for (let i = 0; i < state.perfData.rewards.length; i++) {
             const x = 40 + i * xStep;
-            const y = canvas.height - 30 - (state.perfData.rewards[i] / maxReward) * (canvas.height - 50);
+            const y = canvas.height - 30 - ((state.perfData.rewards[i] - minReward) / range) * (canvas.height - 50);
             
             if (i === 0) {
                 ctx.moveTo(x, y);
@@ -367,6 +396,10 @@ export function updatePerformanceChart() {
         ctx.fillStyle = '#4a9eff';
         ctx.font = '12px sans-serif';
         ctx.fillText('Avg Reward', 45, 35);
+        
+        // Show current value
+        const currentReward = state.perfData.rewards[state.perfData.rewards.length - 1];
+        ctx.fillText(`Current: ${currentReward.toFixed(3)}`, canvas.width - 100, 35);
     }
     
     // Keep only last 100 data points
@@ -381,21 +414,28 @@ export function updateActionVisualizer(envId, actions) {
     const viz = document.getElementById(`action-viz-${envId}`);
     if (!viz || !actions) return;
     
-    // Create action bars if they don't exist
-    if (viz.children.length === 0) {
-        viz.innerHTML = '<div class="action-label">Actions:</div>';
-        actions.forEach((_, idx) => {
-            const actionBar = document.createElement('div');
-            actionBar.className = 'action-bar';
-            actionBar.innerHTML = `
+    // Check if action bars exist AND have content
+    const actionBars = document.getElementById(`action-bars-${envId}`);
+    if (!actionBars || actionBars.children.length === 0) {
+        // Need to create the full structure
+        const barsHtml = actions.map((_, idx) => `
+            <div class="action-bar">
                 <span class="action-index">A${idx}</span>
                 <div class="action-bar-bg">
                     <div class="action-bar-fill" id="action-${envId}-${idx}"></div>
                 </div>
                 <span class="action-value" id="action-val-${envId}-${idx}">0.0</span>
+            </div>
+        `).join('');
+        
+        if (actionBars) {
+            actionBars.innerHTML = barsHtml;
+        } else {
+            viz.innerHTML = `
+                <div class="action-header">Actions</div>
+                <div class="action-bars" id="action-bars-${envId}">${barsHtml}</div>
             `;
-            viz.appendChild(actionBar);
-        });
+        }
     }
     
     // Update action values

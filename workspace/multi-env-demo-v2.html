@@ -91,7 +91,10 @@
             background: #2a2a2a;
             border-radius: 10px;
             padding: 15px;
-            position: relative;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
         }
         
         .env-header {
@@ -116,6 +119,20 @@
         .env-status.active {
             background: #2d5a2d;
             color: #4ade80;
+        }
+        
+        .env-display {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+        
+        .env-visualization {
+            display: flex;
+            flex: 1;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
         }
         
         .env-canvas {
@@ -146,6 +163,7 @@
             padding: 5px 10px;
             border-radius: 3px;
             font-size: 12px;
+            pointer-events: none;
         }
         
         .env-metrics {
@@ -172,12 +190,85 @@
             color: #999;
         }
         
-        .performance-chart {
-            background: #2a2a2a;
-            border-radius: 10px;
-            padding: 20px;
-            height: 300px;
+        .action-viz {
+            background: rgba(0,0,0,0.9);
+            padding: 0;
+            border-radius: 5px;
+            max-height: 0;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            margin-top: 0;
+            opacity: 0;
+        }
+        
+        .action-viz.show {
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 10px;
+            opacity: 1;
+        }
+        
+        .action-header {
+            color: #4a9eff;
+            font-size: 12px;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        .action-bars {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        
+        .action-label {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 5px;
+        }
+        
+        .action-bar {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+            font-size: 11px;
+        }
+        
+        .action-index {
+            width: 25px;
+            color: #666;
+        }
+        
+        .action-bar-bg {
+            flex: 1;
+            height: 14px;
+            background: #333;
+            border-radius: 3px;
+            margin: 0 8px;
             position: relative;
+            overflow: hidden;
+        }
+        
+        .action-bar-fill {
+            height: 100%;
+            background: #4a9eff;
+            transition: width 0.2s ease;
+        }
+        
+        .action-value {
+            width: 40px;
+            text-align: right;
+            color: #999;
+        }
+        
+        .performance-chart {
+            width: 100%;
+            height: 300px;
+            margin-top: 20px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 5px;
         }
         
         #performanceCanvas {
@@ -223,58 +314,6 @@
             padding: 5px 10px;
             border-radius: 5px;
             font-size: 14px;
-        }
-        
-        .action-viz {
-            display: none;
-            margin-top: 10px;
-            padding: 10px;
-            background: #1a1a1a;
-            border-radius: 5px;
-        }
-        
-        .action-viz.show {
-            display: block;
-        }
-        
-        .action-label {
-            font-size: 12px;
-            color: #999;
-            margin-bottom: 5px;
-        }
-        
-        .action-bar {
-            display: flex;
-            align-items: center;
-            margin-bottom: 5px;
-            font-size: 11px;
-        }
-        
-        .action-index {
-            width: 25px;
-            color: #666;
-        }
-        
-        .action-bar-bg {
-            flex: 1;
-            height: 14px;
-            background: #333;
-            border-radius: 3px;
-            margin: 0 8px;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .action-bar-fill {
-            height: 100%;
-            background: #4a9eff;
-            transition: width 0.2s ease;
-        }
-        
-        .action-value {
-            width: 40px;
-            text-align: right;
-            color: #999;
         }
         
         /* Three.js Modal Styles */

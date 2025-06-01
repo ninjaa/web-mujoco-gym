@@ -25,7 +25,6 @@ self.onmessage = async function(e) {
                 break;
                 
             case 'step':
-                console.log('Worker received step command:', data);
                 if (simulation) {
                     stepSimulation(data, id);
                 } else {
@@ -292,8 +291,6 @@ function stepSimulation(data, id) {
         // Update environment state
         envState.stepCount++;
         envState.totalReward += reward;
-        
-        console.log(`Worker sending step result for env ${envId}: reward=${reward}, done=${done}, bodyPos=`, observation.bodyPos);
         
         self.postMessage({
             type: 'step_result',
