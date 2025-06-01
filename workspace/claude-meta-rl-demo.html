@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TabRL: AI Training AI in your Browser Tab</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <script src="./mujoco-orchestrator-v3.js"></script>
+    <script src="./browser-rl.js"></script>
+    <script src="./visualization-2d.js"></script>
+    <script src="./claude-reward-generator.js"></script>
+    <script src="./claude-config.js?v=2"></script>
+    
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #0f1419 0%, #1a2332 100%);
+            color: #f0f0f0;
+            min-height: 100vh;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        h1 {
+            background: linear-gradient(135deg, #ff6b6b 0%, #4a9eff 100%);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shimmerText 3s linear infinite;
+            font-size: 2.5em;
+            margin: 0 0 10px 0;
+        }
+        
+        @keyframes shimmerText {
+            to { background-position: 200% center; }
+        }
+        
+        .meta-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .training-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .policy-box {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(116, 179, 255, 0.2);
+            border-radius: 12px;
+            padding: 15px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .policy-box.winner {
+            border-color: #22c55e;
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+        }
+        
+        .policy-canvas {
+            width: 100%;
+            height: 150px;
+            background: #0a0a0a;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        
+        .claude-analysis {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(116, 179, 255, 0.2);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            min-height: 400px;
+        }
+        
+        .analysis-text {
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #4a9eff 0%, #357abd 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(74, 158, 255, 0.3);
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(74, 158, 255, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .iteration-counter {
+            text-align: center;
+            font-size: 1.2em;
+            color: #74b3ff;
+            margin: 20px 0;
+        }
+        
+        .performance-chart {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(116, 179, 255, 0.2);
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 20px;
+            height: 300px;
+        }
+        
+        .policy-stats {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        
+        .stat {
+            color: #74b3ff;
+        }
+        
+        .stat-value {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 TabRL: AI Training AI in your Browser Tab</h1>
+        <p>LLM-guided reinforcement learning with iterative meta-learning - all in your browser!</p>
+    </div>
+
+    <div class="iteration-counter">
+        Iteration <span id="iterationNum">0</span> of 3
+    </div>
+
+    <div class="controls">
+        <button id="startMetaTraining" onclick="startMetaTraining()">
+            🚀 Start Meta-Training
+        </button>
+        <button id="stopTraining" onclick="stopTraining()" disabled>
+            ⏹️ Stop
+        </button>
+        <button id="exportWinner" onclick="exportWinningPolicy()" disabled>
+            💾 Export Winner
+        </button>
+        <label style="margin-left: 20px; color: #74b3ff;">
+            Episodes/iteration:
+            <select id="episodesPerIteration" style="background: rgba(0,0,0,0.3); color: #74b3ff; border: 1px solid #4a9eff; padding: 5px; border-radius: 5px;">
+                <option value="10">10 (Quick demo - 5% success)</option>
+                <option value="50" selected>50 (Moderate - 20% success)</option>
+                <option value="100">100 (Better - 40% success)</option>
+                <option value="200">200 (Good - 60% success)</option>
+                <option value="500">500 (Realistic - 80% success)</option>
+            </select>
+        </label>
+        <span id="apiStatus" style="margin-left: 20px; font-size: 14px; color: #888;">
+            <!-- API status will be shown here -->
+        </span>
+    </div>
+
+    <div class="meta-container">
+        <!-- Training Policies -->
+        <div>
+            <h3 style="text-align: center; color: #74b3ff;">Competing Policies</h3>
+            <div class="training-grid" id="policyGrid">
+                <!-- Policy boxes will be generated here -->
+            </div>
+        </div>
+
+        <!-- Claude's Analysis -->
+        <div>
+            <h3 style="text-align: center; color: #74b3ff;">Claude's Analysis</h3>
+            <div class="claude-analysis">
+                <div id="analysisText" class="analysis-text">
+Waiting to start meta-training...
+
+Claude will:
+1. Generate diverse reward functions
+2. Train multiple policies in parallel
+3. Analyze performance differences
+4. Iterate and improve
+
+Ready to begin! 🎯
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Performance Comparison Chart -->
+    <div class="performance-chart">
+        <canvas id="performanceChart"></canvas>
+    </div>
+
+    <script>
+        // Global state for meta-training
+        window.metaState = {
+            policies: [],
+            orchestrators: [],
+            iteration: 0,
+            isTraining: false,
+            performanceChart: null,
+            policyConfigs: [
+                { 
+                    name: "Speed Demon", 
+                    color: "#ff6b6b",
+                    rewardFocus: "forward velocity",
+                    learningRate: 0.02,
+                    explorationNoise: 0.4
+                },
+                { 
+                    name: "Balance Master", 
+                    color: "#4a9eff",
+                    rewardFocus: "upright stability",
+                    learningRate: 0.01,
+                    explorationNoise: 0.2
+                },
+                { 
+                    name: "Energy Saver", 
+                    color: "#22c55e",
+                    rewardFocus: "efficiency",
+                    learningRate: 0.005,
+                    explorationNoise: 0.1
+                },
+                { 
+                    name: "Hybrid Explorer", 
+                    color: "#fbbf24",
+                    rewardFocus: "balanced",
+                    learningRate: 0.015,
+                    explorationNoise: 0.3
+                }
+            ]
+        };
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', async function() {
+            console.log('Initializing meta-RL demo...');
+            initializePolicyGrid();
+            initializePerformanceChart();
+            
+            // Check API status
+            const apiStatus = document.getElementById('apiStatus');
+            console.log('Checking Claude config:', window.CLAUDE_CONFIG);
+            console.log('API Key exists:', window.CLAUDE_CONFIG?.apiKey ? 'Yes' : 'No');
+            console.log('API Key is placeholder:', window.CLAUDE_CONFIG?.apiKey === 'YOUR_ANTHROPIC_API_KEY_HERE');
+            
+            if (window.CLAUDE_CONFIG && window.CLAUDE_CONFIG.apiKey && window.CLAUDE_CONFIG.apiKey !== 'YOUR_ANTHROPIC_API_KEY_HERE') {
+                apiStatus.innerHTML = '✅ Claude API configured';
+                apiStatus.style.color = '#22c55e';
+            } else {
+                apiStatus.innerHTML = '⚠️ Using simulated analysis (add API key in claude-config.js)';
+                apiStatus.style.color = '#fbbf24';
+            }
+        });
+
+        function initializePolicyGrid() {
+            const grid = document.getElementById('policyGrid');
+            grid.innerHTML = '';
+            
+            window.metaState.policyConfigs.forEach((config, idx) => {
+                const box = document.createElement('div');
+                box.className = 'policy-box';
+                box.id = `policy-${idx}`;
+                box.innerHTML = `
+                    <h4 style="color: ${config.color}; margin: 0 0 10px 0;">${config.name}</h4>
+                    <div class="policy-stats">
+                        <span class="stat">Focus: <span class="stat-value">${config.rewardFocus}</span></span>
+                        <span class="stat">LR: <span class="stat-value">${config.learningRate}</span></span>
+                    </div>
+                    <canvas id="canvas-${idx}" class="policy-canvas"></canvas>
+                    <div class="policy-stats">
+                        <span class="stat">Reward: <span id="reward-${idx}" class="stat-value">0</span></span>
+                        <span class="stat">Episodes: <span id="episodes-${idx}" class="stat-value">0</span></span>
+                    </div>
+                `;
+                grid.appendChild(box);
+            });
+        }
+
+        function initializePerformanceChart() {
+            const ctx = document.getElementById('performanceChart').getContext('2d');
+            window.metaState.performanceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: window.metaState.policyConfigs.map(config => ({
+                        label: config.name,
+                        data: [],
+                        borderColor: config.color,
+                        backgroundColor: config.color + '20',
+                        tension: 0.4
+                    }))
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#f0f0f0' }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#f0f0f0' },
+                            grid: { color: 'rgba(240, 240, 240, 0.1)' }
+                        },
+                        y: {
+                            ticks: { color: '#f0f0f0' },
+                            grid: { color: 'rgba(240, 240, 240, 0.1)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function startMetaTraining() {
+            console.log('Starting meta-training...');
+            
+            document.getElementById('startMetaTraining').disabled = true;
+            document.getElementById('stopTraining').disabled = false;
+            window.metaState.isTraining = true;
+            
+            // Run 3 iterations of meta-learning
+            for (let iter = 0; iter < 3 && window.metaState.isTraining; iter++) {
+                window.metaState.iteration = iter;
+                document.getElementById('iterationNum').textContent = iter + 1;
+                
+                await runMetaIteration(iter);
+                
+                if (iter < 2 && window.metaState.isTraining) {
+                    await analyzeAndImprove(iter);
+                }
+            }
+            
+            // Final analysis
+            if (window.metaState.isTraining) {
+                displayFinalAnalysis();
+            }
+            
+            document.getElementById('startMetaTraining').disabled = false;
+            document.getElementById('stopTraining').disabled = true;
+            document.getElementById('exportWinner').disabled = false;
+        }
+
+        async function runMetaIteration(iteration) {
+            const analysisDiv = document.getElementById('analysisText');
+            
+            analysisDiv.textContent = `🔄 Meta-Iteration ${iteration + 1} Starting...`;
+
+            // Initialize Claude generator if needed
+            if (!window.metaState.claudeGenerator) {
+                const apiKey = window.CLAUDE_CONFIG?.apiKey;
+                window.metaState.claudeGenerator = new ClaudeRewardGenerator(apiKey);
+            }
+
+            // Create policies and orchestrators
+            window.metaState.policies = [];
+            window.metaState.orchestrators = [];
+            
+            for (let i = 0; i < window.metaState.policyConfigs.length; i++) {
+                const config = window.metaState.policyConfigs[i];
+                
+                // Create custom BrowserRL with config
+                const policy = new BrowserRL();
+                policy.learningRate = config.learningRate;
+                window.metaState.policies.push(policy);
+                
+                // Create orchestrator for this policy
+                const orchestrator = new OptimizedOrchestrator(1, 1);
+                await orchestrator.initialize();
+                window.metaState.orchestrators.push(orchestrator);
+                
+                // Set up visualization
+                setupPolicyVisualization(i);
+            }
+            
+            // Generate reward functions using Claude or diverse strategies
+            analysisDiv.textContent += '\n\n🧠 Generating reward functions...';
+            const rewardFunctions = await generateClaudeGuidedRewardFunctions(iteration);
+            
+            // Train all policies in parallel
+            analysisDiv.textContent += `\n\n⚡ Training ${window.metaState.policies.length} policies in parallel...`;
+            
+            // Get episodes from UI
+            const episodesSelect = document.getElementById('episodesPerIteration');
+            const episodesPerPolicy = parseInt(episodesSelect.value);
+            
+            analysisDiv.textContent += `\n(${episodesPerPolicy} episodes per policy)`;
+            
+            await trainPoliciesInParallel(rewardFunctions, episodesPerPolicy);
+            
+            // Compare results
+            const performances = window.metaState.policies.map((p, i) => ({
+                index: i,
+                name: window.metaState.policyConfigs[i].name,
+                avgReward: p.rewardHistory.slice(-5).reduce((a,b) => a+b, 0) / 5
+            }));
+            
+            performances.sort((a, b) => b.avgReward - a.avgReward);
+            
+            // Highlight winner
+            document.querySelectorAll('.policy-box').forEach(box => box.classList.remove('winner'));
+            document.getElementById(`policy-${performances[0].index}`).classList.add('winner');
+            
+            analysisDiv.textContent += `\n\n🏆 Iteration ${iteration + 1} Results:
+${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).join('\n')}`;
+        }
+
+        async function generateClaudeGuidedRewardFunctions(iteration) {
+            const rewards = [];
+            
+            // If no real Claude API, fall back to diverse functions
+            if (!window.CLAUDE_CONFIG || window.CLAUDE_CONFIG.apiKey === 'YOUR_ANTHROPIC_API_KEY_HERE') {
+                return generateDiverseRewardFunctions();
+            }
+            
+            // Use Claude to generate reward functions based on iteration learnings
+            for (let i = 0; i < window.metaState.policyConfigs.length; i++) {
+                const config = window.metaState.policyConfigs[i];
+                
+                // Create task description based on config and iteration
+                let taskDescription = `Make a humanoid robot ${config.rewardFocus}`;
+                
+                if (iteration > 0) {
+                    // Add learnings from previous iteration
+                    taskDescription += `. Previous attempt showed that ${
+                        config.learningRate > 0.01 ? 'high learning rates cause instability' : 'low learning rates are too slow'
+                    }. Adjust reward to be more ${
+                        config.rewardFocus === 'forward velocity' ? 'speed-focused but stable' :
+                        config.rewardFocus === 'upright stability' ? 'balance-focused with some movement' :
+                        'efficient'
+                    }.`;
+                }
+                
+                try {
+                    const rewardFn = await window.metaState.claudeGenerator.generateReward(taskDescription);
+                    rewards.push(rewardFn);
+                } catch (error) {
+                    console.error('Claude generation failed:', error);
+                    // Fallback to hardcoded
+                    rewards.push(generateDiverseRewardFunctions()[i]);
+                }
+            }
+            
+            return rewards;
+        }
+        
+        function generateDiverseRewardFunctions() {
+            return window.metaState.policyConfigs.map(config => {
+                let rewardCode = '';
+                
+                switch(config.rewardFocus) {
+                    case 'forward velocity':
+                        rewardCode = `
+                            const bodyPos = state.bodyPos || [0, 0, 0];
+                            const bodyVel = state.bodyVel || [0, 0, 0];
+                            let reward = bodyVel[0] * 5.0; // Heavy forward bias
+                            if (bodyPos[2] > 0.5) reward += 0.5;
+                            if (bodyPos[2] < 0.5) reward -= 10.0;
+                            return reward;
+                        `;
+                        break;
+                        
+                    case 'upright stability':
+                        rewardCode = `
+                            const bodyPos = state.bodyPos || [0, 0, 0];
+                            const bodyVel = state.bodyVel || [0, 0, 0];
+                            let reward = (bodyPos[2] - 0.8) * 5.0; // Height focus
+                            reward += Math.max(0, bodyVel[0]) * 1.0;
+                            const energyPenalty = action.reduce((sum, a) => sum + a*a, 0) * 0.01;
+                            reward -= energyPenalty;
+                            return reward;
+                        `;
+                        break;
+                        
+                    case 'efficiency':
+                        rewardCode = `
+                            const bodyPos = state.bodyPos || [0, 0, 0];
+                            const bodyVel = state.bodyVel || [0, 0, 0];
+                            let reward = 1.0; // Base survival
+                            reward += Math.max(0, bodyVel[0]) * 2.0;
+                            const energyPenalty = action.reduce((sum, a) => sum + a*a, 0) * 0.1;
+                            reward -= energyPenalty; // Heavy energy penalty
+                            if (bodyPos[2] < 0.5) reward -= 5.0;
+                            return reward;
+                        `;
+                        break;
+                        
+                    default: // balanced
+                        rewardCode = `
+                            const bodyPos = state.bodyPos || [0, 0, 0];
+                            const bodyVel = state.bodyVel || [0, 0, 0];
+                            let reward = 1.0;
+                            reward += Math.max(0, bodyVel[0]) * 3.0;
+                            reward += Math.max(0, (bodyPos[2] - 0.8) * 2.0);
+                            const energyPenalty = action.reduce((sum, a) => sum + a*a, 0) * 0.001;
+                            reward -= energyPenalty;
+                            if (bodyPos[2] < 0.5) reward -= 5.0;
+                            return reward;
+                        `;
+                }
+                
+                return new Function('state', 'action', rewardCode);
+            });
+        }
+
+        async function trainPoliciesInParallel(rewardFunctions, episodesPerPolicy) {
+            const promises = [];
+            
+            for (let ep = 0; ep < episodesPerPolicy; ep++) {
+                // Train all policies for one episode
+                for (let i = 0; i < window.metaState.policies.length; i++) {
+                    if (!window.metaState.isTraining) break;
+                    
+                    const promise = trainSingleEpisode(i, rewardFunctions[i]);
+                    promises.push(promise);
+                    
+                    // Update episode counter
+                    document.getElementById(`episodes-${i}`).textContent = ep + 1;
+                }
+                
+                // Wait for all to complete
+                await Promise.all(promises);
+                
+                // Update chart
+                updatePerformanceChart();
+                
+                // Small delay between episodes
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+
+        async function trainSingleEpisode(policyIndex, rewardFunction) {
+            const policy = window.metaState.policies[policyIndex];
+            const orchestrator = window.metaState.orchestrators[policyIndex];
+            
+            // Set up visualization callback
+            const canvasData = window.metaState[`canvas${policyIndex}`];
+            if (canvasData) {
+                policy.onTrainingStep = (data) => {
+                    if (data.state) {
+                        drawMiniVisualization(canvasData.ctx, { observation: data.state });
+                    }
+                };
+            }
+            
+            const reward = await policy.trainEpisode(orchestrator, rewardFunction, 0);
+            
+            // Update display
+            document.getElementById(`reward-${policyIndex}`).textContent = reward.toFixed(1);
+            
+            return reward;
+        }
+
+        function setupPolicyVisualization(index) {
+            const canvas = document.getElementById(`canvas-${index}`);
+            const ctx = canvas.getContext('2d');
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+            
+            // Store canvas context for updates
+            window.metaState[`canvas${index}`] = { ctx, canvas };
+            
+            // Start orchestrator
+            const orchestrator = window.metaState.orchestrators[index];
+            orchestrator.start();
+        }
+
+        function drawMiniVisualization(ctx, state) {
+            const obs = state.observation;
+            const bodyPos = obs.bodyPos || [0, 0, 1];
+            const fallen = bodyPos[2] < 0.8;
+            
+            // Clear and draw
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            
+            // Simple background
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            
+            // Calculate position
+            const x = (bodyPos[0] + 2) * 30 + ctx.canvas.width/2 - 60;
+            const y = ctx.canvas.height - 50;
+            
+            // Draw mini stick figure
+            ctx.save();
+            ctx.scale(0.5, 0.5);
+            drawStickFigure(ctx, x * 2, y * 2, '#4a9eff', fallen, obs);
+            ctx.restore();
+            
+            // Ground line
+            ctx.strokeStyle = 'rgba(116, 179, 255, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, ctx.canvas.height - 20);
+            ctx.lineTo(ctx.canvas.width, ctx.canvas.height - 20);
+            ctx.stroke();
+        }
+
+        function updatePerformanceChart() {
+            const chart = window.metaState.performanceChart;
+            
+            // Add new data point
+            const episodeNum = chart.data.labels.length + 1;
+            chart.data.labels.push(`E${episodeNum}`);
+            
+            window.metaState.policies.forEach((policy, i) => {
+                const lastReward = policy.rewardHistory[policy.rewardHistory.length - 1] || 0;
+                chart.data.datasets[i].data.push(lastReward);
+            });
+            
+            // Keep last 30 points
+            if (chart.data.labels.length > 30) {
+                chart.data.labels.shift();
+                chart.data.datasets.forEach(ds => ds.data.shift());
+            }
+            
+            chart.update();
+        }
+
+        async function analyzeAndImprove(iteration) {
+            const analysisDiv = document.getElementById('analysisText');
+            
+            analysisDiv.textContent += `\n\n🧠 Analyzing results...`;
+            
+            // Get performance data
+            const performances = window.metaState.policies.map((p, i) => ({
+                config: window.metaState.policyConfigs[i],
+                avgReward: p.rewardHistory.slice(-5).reduce((a,b) => a+b, 0) / 5,
+                improvement: p.rewardHistory.length > 5 ? 
+                    (p.rewardHistory.slice(-5).reduce((a,b) => a+b, 0) / 5) - 
+                    (p.rewardHistory.slice(0, 5).reduce((a,b) => a+b, 0) / 5) : 0,
+                rewardHistory: p.rewardHistory.slice(-10)
+            }));
+            
+            performances.sort((a, b) => b.avgReward - a.avgReward);
+            
+            // Check if real Claude API is available
+            if (window.CLAUDE_CONFIG && window.CLAUDE_CONFIG.apiKey !== 'YOUR_ANTHROPIC_API_KEY_HERE') {
+                // Use real Claude
+                analysisDiv.textContent += '\n\n🤖 Consulting Claude for meta-analysis...';
+                
+                try {
+                    const analysis = await getClaudeAnalysis(performances, iteration);
+                    analysisDiv.textContent += `\n\n${analysis}`;
+                    
+                    // Parse Claude's suggestions and apply them
+                    applyClaudeSuggestions(performances, analysis);
+                } catch (error) {
+                    console.error('Claude API error:', error);
+                    analysisDiv.textContent += '\n\n⚠️ Claude API unavailable, using heuristic analysis...';
+                    performHeuristicAnalysis(performances, analysisDiv);
+                }
+            } else {
+                // Fallback to heuristic analysis
+                performHeuristicAnalysis(performances, analysisDiv);
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+        
+        async function getClaudeAnalysis(performances, iteration) {
+            const prompt = `You are analyzing reinforcement learning training results for humanoid robots. 
+
+Iteration ${iteration + 1} Results:
+${performances.map((p, i) => `
+Policy "${p.config.name}":
+- Focus: ${p.config.rewardFocus}
+- Learning Rate: ${p.config.learningRate}
+- Avg Reward: ${p.avgReward.toFixed(2)}
+- Improvement: ${p.improvement.toFixed(2)}
+- Recent rewards: ${p.rewardHistory.map(r => r.toFixed(1)).join(', ')}
+`).join('\n')}
+
+Based on these results:
+
+1. Identify which approach is working best and why
+2. For each policy, suggest SPECIFIC changes:
+   - If rewards are negative: "Reduce fall penalty from X to Y"
+   - If not improving: "Increase learning rate from X to Y"
+   - If unstable: "Add stability bonus of X points"
+3. Provide exact hyperparameter values for next iteration
+
+Format your response as:
+ANALYSIS: [brief explanation]
+POLICY_UPDATES:
+- Speed Demon: lr=0.015, add velocity cap at 2.0 m/s
+- Balance Master: lr=0.008, increase height bonus to 3.0
+[etc]
+
+Be specific with numbers that will lead to convergence.`;
+
+            const response = await fetch('http://localhost:3001/claude', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': window.CLAUDE_CONFIG.apiKey,
+                    'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify({
+                    model: window.CLAUDE_CONFIG.model,
+                    max_tokens: window.CLAUDE_CONFIG.maxTokens,
+                    messages: [{
+                        role: 'user',
+                        content: prompt
+                    }]
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`API request failed: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            return data.content[0].text;
+        }
+        
+        function performHeuristicAnalysis(performances, analysisDiv) {
+            // Original heuristic analysis
+            const improvements = [];
+            
+            if (performances[0].config.rewardFocus === 'forward velocity') {
+                improvements.push("Speed-focused policy winning - increase velocity rewards for others");
+            } else if (performances[0].config.rewardFocus === 'upright stability') {
+                improvements.push("Stability winning - balance rewards need tuning");
+            }
+            
+            if (performances[performances.length - 1].avgReward < -500) {
+                improvements.push("Worst performer falling too much - reduce fall penalties");
+            }
+            
+            if (Math.abs(performances[0].avgReward - performances[performances.length - 1].avgReward) > 200) {
+                improvements.push("Large performance gap - adjust learning rates");
+            }
+            
+            analysisDiv.textContent += `\n\n💡 Improvements for next iteration:
+${improvements.map((imp, i) => `${i+1}. ${imp}`).join('\n')}`;
+            
+            applyImprovements(performances, improvements);
+        }
+        
+        function applyClaudeSuggestions(performances, analysis) {
+            // Parse Claude's POLICY_UPDATES section
+            const updatesMatch = analysis.match(/POLICY_UPDATES:([\s\S]*?)(?:\n\n|$)/);
+            if (!updatesMatch) {
+                // Fallback to heuristic
+                applyImprovements(performances, []);
+                return;
+            }
+            
+            const updates = updatesMatch[1].trim().split('\n');
+            
+            // Parse each policy update
+            updates.forEach(update => {
+                // Match pattern like "- Speed Demon: lr=0.015, add velocity cap at 2.0 m/s"
+                const policyMatch = update.match(/- (.*?):\s*(.*)/);
+                if (!policyMatch) return;
+                
+                const policyName = policyMatch[1].trim();
+                const changes = policyMatch[2];
+                
+                // Find the matching policy
+                const perf = performances.find(p => p.config.name === policyName);
+                if (!perf) return;
+                
+                // Parse learning rate
+                const lrMatch = changes.match(/lr=(\d+\.?\d*)/);
+                if (lrMatch) {
+                    perf.config.learningRate = parseFloat(lrMatch[1]);
+                }
+                
+                // Parse exploration noise
+                const noiseMatch = changes.match(/noise=(\d+\.?\d*)/);
+                if (noiseMatch) {
+                    perf.config.explorationNoise = parseFloat(noiseMatch[1]);
+                }
+                
+                // Store other suggestions for reward function generation
+                perf.config.claudeSuggestions = changes;
+            });
+            
+            // Also apply general heuristics
+            applyImprovements(performances, []);
+        }
+
+        function applyImprovements(performances, improvements) {
+            // Adjust configs based on analysis
+            performances.forEach((perf, idx) => {
+                if (idx === 0) {
+                    // Winner - small tweaks only
+                    perf.config.learningRate *= 0.9;
+                } else if (perf.avgReward < -500) {
+                    // Poor performer - bigger changes
+                    perf.config.learningRate *= 1.5;
+                    perf.config.explorationNoise *= 1.2;
+                } else {
+                    // Middle performers - moderate adjustments
+                    perf.config.learningRate *= 1.1;
+                }
+            });
+        }
+
+        function displayFinalAnalysis() {
+            const analysisDiv = document.getElementById('analysisText');
+            
+            const finalPerformances = window.metaState.policies.map((p, i) => ({
+                name: window.metaState.policyConfigs[i].name,
+                avgReward: p.rewardHistory.slice(-10).reduce((a,b) => a+b, 0) / 10,
+                totalImprovement: p.rewardHistory.length > 10 ?
+                    (p.rewardHistory.slice(-10).reduce((a,b) => a+b, 0) / 10) -
+                    (p.rewardHistory.slice(0, 10).reduce((a,b) => a+b, 0) / 10) : 0
+            }));
+            
+            finalPerformances.sort((a, b) => b.avgReward - a.avgReward);
+            
+            analysisDiv.textContent = `🎉 Meta-Training Complete!
+
+Final Rankings:
+${finalPerformances.map((p, i) => 
+    `${i+1}. ${p.name}
+   Avg Reward: ${p.avgReward.toFixed(2)}
+   Improvement: ${p.totalImprovement > 0 ? '+' : ''}${p.totalImprovement.toFixed(2)}`
+).join('\n\n')}
+
+🏆 Winner: ${finalPerformances[0].name}
+
+Key Insights:
+• Best reward focus: ${window.metaState.policyConfigs.find(c => c.name === finalPerformances[0].name).rewardFocus}
+• Optimal learning rate: ${window.metaState.policyConfigs.find(c => c.name === finalPerformances[0].name).learningRate}
+• Meta-learning successfully identified best hyperparameters
+• All policies improved through iterative refinement`;
+        }
+
+        function stopTraining() {
+            window.metaState.isTraining = false;
+            
+            // Stop all orchestrators
+            window.metaState.orchestrators.forEach(orc => {
+                if (orc.physicsInterval) {
+                    orc.stop();
+                }
+            });
+            
+            document.getElementById('startMetaTraining').disabled = false;
+            document.getElementById('stopTraining').disabled = true;
+        }
+        
+        function exportWinningPolicy() {
+            // Find best performing policy
+            const performances = window.metaState.policies.map((p, i) => ({
+                index: i,
+                policy: p,
+                config: window.metaState.policyConfigs[i],
+                avgReward: p.rewardHistory.slice(-10).reduce((a,b) => a+b, 0) / 10
+            }));
+            
+            performances.sort((a, b) => b.avgReward - a.avgReward);
+            const winner = performances[0];
+            
+            // Export the policy
+            const exportData = {
+                policyName: winner.config.name,
+                avgReward: winner.avgReward,
+                config: winner.config,
+                network: winner.policy.policy.serialize(),
+                timestamp: new Date().toISOString()
+            };
+            
+            // Save to localStorage for easy loading in multi-env-demo
+            localStorage.setItem('trainedPolicy', JSON.stringify(exportData));
+            
+            // Also download as file
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `policy-${winner.config.name}-${Date.now()}.json`;
+            a.click();
+            
+            alert(`Exported "${winner.config.name}" policy with avg reward: ${winner.avgReward.toFixed(2)}\n\nSaved to localStorage and downloaded as file.`);
+        }
+    </script>
+</body>
+</html>

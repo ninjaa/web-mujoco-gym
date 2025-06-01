@@ -1,26 +1,57 @@
-# 🚀 MuJoCo WebSim: Massively Parallel RL in Your Browser
+# TabRL: AI Training AI in Your Browser Tab 🤖
 
-## 🎯 The Vision
+A groundbreaking browser-based reinforcement learning framework that uses LLMs (Claude) to iteratively improve humanoid robot control policies - all running locally in your browser!
 
-**"What if you could run 1000 reinforcement learning environments on your laptop... in a browser tab?"**
+**🎥 Demo Video: https://tinyurl.com/tabrl**
 
-MuJoCo WebSim brings massively parallel physics simulation to the web, democratizing large-scale RL experimentation. No cloud setup. No infrastructure costs. Just open a browser and start training.
+![Demo Screenshot](./workspace/current%20dashboard.png)
 
-## 💡 Why This Matters
+## 🚀 Quick Start
 
-Current RL research requires either:
-- 🖥️ Expensive cloud compute for parallel training
-- ⏰ Slow local training with limited parallelism  
-- 🔧 Complex distributed systems setup
+### 1. Start the Claude API Proxy (Required for LLM Features)
+```bash
+# Simple proxy - no dependencies needed!
+node workspace/simple-proxy.js
+```
 
-**We're changing that.** With WebAssembly and Web Workers, we can run hundreds of MuJoCo physics simulations in parallel, right in your browser.
+### 2. Open the Demo
+```bash
+# Main multi-environment demo
+open http://localhost:8080/workspace/multi-env-demo.html
 
-### Key Innovations
-1. **Browser-Native Parallelism**: Leverage Web Workers for true parallel execution
-2. **Zero Infrastructure**: No Docker swarms, no Kubernetes, no cloud bills
-3. **Real-Time Visualization**: See what your agent is learning as it trains
-4. **Instant Sharing**: Send a URL to share your trained agent with anyone
-5. **Cross-Platform**: Works on any device with a modern browser
+# LLM-guided meta-learning demo
+open http://localhost:8080/workspace/claude-rl-demo.html
+```
+
+### 3. Configure Claude API (Optional)
+Edit `workspace/claude-config.js` and add your API key:
+```javascript
+window.CLAUDE_CONFIG = {
+    apiKey: 'YOUR_ANTHROPIC_API_KEY_HERE',
+    model: 'claude-opus-4-20250514',
+    maxTokens: 1000
+};
+```
+
+## 🎯 Features
+
+### Browser-Based RL Training
+- **Real-time policy gradient learning** - Train neural networks directly in the browser
+- **WebAssembly MuJoCo physics** - Full physics simulation at 1000+ Hz
+- **Multi-threaded architecture** - Web Workers for parallel training
+- **Zero installation** - Just open in a browser!
+
+### LLM-Guided Meta-Learning
+- **Claude-generated reward functions** - AI writes reward functions based on task descriptions
+- **Iterative improvement** - Claude analyzes performance and suggests hyperparameter changes
+- **Population-based training** - 4 policies compete with different strategies
+- **Automatic convergence** - Meta-loop finds optimal configurations
+
+### Visualization
+- **2D stick figure rendering** - Real-time robot state visualization
+- **3D Three.js views** - Click any environment for detailed 3D view
+- **Performance graphs** - Track learning progress across iterations
+- **Live statistics** - FPS, rewards, episode counts
 
 ## 🏗️ Architecture
 
@@ -43,36 +74,119 @@ Current RL research requires either:
 └─────────┘      └─────────┘    └─────────┘
 ```
 
-### Modular Design (v2)
-The latest refactor splits functionality into focused modules:
-- `mujoco-orchestrator.js` - Manages worker pool and environment distribution
-- `mujoco-rl-worker-v2.js` - Runs MuJoCo physics in Web Workers
-- `ui-controls.js` - UI state management and render loop
-- `visualization-2d.js` - 2D stick figure rendering
-- `threejs-modal.js` - 3D visualization popup (click any environment)
+### Key Components
+- **mujoco-orchestrator-v3.js** - Manages worker pool and environment distribution
+- **browser-rl.js** - Policy gradient RL implementation with TinyMLP
+- **claude-reward-generator.js** - LLM integration for reward function generation
+- **visualization-2d.js** - Efficient 2D rendering with jazzy effects
+- **threejs-modal.js** - 3D visualization popup
+- **simple-proxy.js** - Lightweight CORS proxy for Claude API access
 
-## 📊 Current Status
+## 🧠 How It Works
 
-### ✅ Working
-- MuJoCo WASM compilation pipeline (x86_64 via Docker on Apple Silicon)
-- Multi-environment orchestration with Web Workers
-- Real-time visualization dashboard
-- Basic physics simulation (pendulum demo)
-- RL policy integration
-- Environment randomization
+### 1. Physics Simulation
+MuJoCo WASM runs in Web Workers, simulating humanoid robot dynamics at 1000+ Hz.
 
-### 🚧 In Progress
-- Integration of complex robot models (humanoid, ant, cheetah)
-- Performance optimization for 1000+ environments
-- RL policy integration
-- Environment randomization
+### 2. Neural Network Policy
+A tiny MLP (72→64→32→21) learns to control 21 joint torques based on:
+- Body position and velocity
+- Joint positions and velocities
+- Contact forces
 
-### 📈 Performance Targets
-- **Current**: 120 visual FPS with 12 environments
-- **Target**: 1000+ environments at 10,000+ physics steps/second
-- **Strategy**: Decouple physics from rendering, batch updates
+### 3. Policy Gradient Learning
+```javascript
+// Simplified update rule
+gradient = advantage * log_prob
+weights += learning_rate * gradient
+```
 
-## 🎮 Use Cases
+### 4. LLM Meta-Loop
+Claude generates reward functions and analyzes performance:
+```
+Iteration 1: Generate diverse reward functions
+→ Train 4 policies in parallel
+→ Claude analyzes results
+→ Suggests hyperparameter changes
+
+Iteration 2: Apply Claude's suggestions
+→ Train with improved configs
+→ Track convergence
+
+Iteration 3: Final optimization
+→ Export best policy
+```
+
+## 📊 Performance
+
+- **Training Speed**: 50-500 episodes converge to stable walking
+- **Physics Rate**: 1000+ steps/second per environment  
+- **Rendering**: 120 FPS with 12 environments
+- **Scalability**: Tested with 100+ parallel environments
+
+## 🛠️ Development
+
+### Docker Setup (Full Build Environment)
+```bash
+# Build and run
+docker-compose up --build -d
+
+# Access container
+docker exec -it mujoco-wasm-container bash
+
+# Rebuild WASM
+docker exec -it mujoco-wasm-container build
+```
+
+### Project Structure
+```
+workspace/
+├── claude-rl-demo.html      # LLM meta-learning demo
+├── multi-env-demo.html      # Main parallel RL demo
+├── browser-rl.js            # RL algorithm implementation
+├── claude-reward-generator.js # LLM reward generation
+├── mujoco-orchestrator-v3.js # Worker management
+├── visualization-2d.js      # 2D rendering
+├── threejs-modal.js        # 3D visualization
+└── simple-proxy.js         # CORS proxy for Claude API
+```
+
+## 🎮 Usage Examples
+
+### Basic RL Training
+```javascript
+const policy = new BrowserRL();
+const orchestrator = new OptimizedOrchestrator(1, 1);
+await orchestrator.initialize();
+
+// Train for 100 episodes
+for (let i = 0; i < 100; i++) {
+    const reward = await policy.trainEpisode(orchestrator, rewardFunction, 0);
+    console.log(`Episode ${i}: ${reward}`);
+}
+```
+
+### LLM-Generated Rewards
+```javascript
+const generator = new ClaudeRewardGenerator(apiKey);
+const rewardFn = await generator.generateReward("Make robot walk forward efficiently");
+```
+
+## 🚧 Current Status
+
+**Hackathon Sprint - Statement 3: Reasoning and Task RL**
+- ✅ Browser-based RL training working
+- ✅ LLM-guided reward generation implemented
+- ✅ Meta-learning loop with Claude analysis
+- ✅ Real-time visualization
+- ✅ CORS proxy for API calls
+- 🔄 Integration with multi-agent factory (overtime hack)
+
+**Next Steps (Overtime Hacking):**
+- Connect trained policies from `claude-rl-demo.html` to `multi-env-demo.html`
+- Enable running pre-trained policies without training episodes
+- Scale to 1000+ environments running exported policies
+
+## 🎯 Use Cases
 
 1. **RL Education**: Students can experiment without cloud access
 2. **Rapid Prototyping**: Test reward functions and environment designs instantly
@@ -80,87 +194,44 @@ The latest refactor splits functionality into focused modules:
 4. **Curriculum Learning**: Dynamically adjust environment difficulty
 5. **Multi-Agent RL**: Run swarms of agents in the same browser
 
-## 🚀 Quick Start
+## 💡 Why This Matters
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/mujoco-websim.git
-cd mujoco-websim
+Traditional RL development has two major bottlenecks:
+1. **Compute Infrastructure**: Expensive cloud setups for parallel training
+2. **Reward Engineering**: Manual trial-and-error to design reward functions
 
-# Build and run (requires Docker)
-docker-compose up --build -d
-
-# Open the demo
-open http://localhost:8080/workspace/multi-env-demo.html
-```
-
-## 🛠️ Development Setup
-
-### Prerequisites
-- Docker (for building MuJoCo WASM)
-- Modern browser with Web Worker support
-- 8GB+ RAM recommended for 100+ environments
-
-### Building from Source
-```bash
-# The Docker container handles the complex WASM build
-docker-compose up --build -d
-
-# Watch the build logs
-docker logs -f mujoco-wasm-container
-
-# Access the demos
-http://localhost:8080/workspace/multi-env-demo.html    # Main parallel RL demo
-```
-
-## 🎯 Hackathon Goals
-
-### Phase 1: Core Demo (Day 1)
-- [ ] Fix robot model rendering (currently showing spheres)
-- [ ] Integrate real MuJoCo physics into parallel demo
-- [ ] Benchmark maximum environments on M1 MacBook Pro
-
-### Phase 2: Scale & Performance (Day 2)  
-- [ ] Optimize for 1000+ environments
-- [ ] Add environment diversity and randomization
-- [ ] Implement basic RL policy (PPO or SAC)
-- [ ] Cloud deployment and scaling tests
-
-### Phase 3: Polish & Present (Day 3)
-- [ ] Create compelling visual demo
-- [ ] Add interactive controls (speed, env count, visualization options)
-- [ ] Performance comparison vs traditional approaches
-- [ ] Prepare 3-minute pitch
-
-## 📚 Technical Documentation
-
-- [**Project Status & Demo Guide**](./PROJECT-STATUS.md) - Current implementation status and demo instructions
-- [MuJoCo Array Mapping Guide](./MUJOCO-ARRAY-MAPPING.md) - Understanding how MuJoCo XML models map to WASM arrays
-- [Technical Architecture Brief](./TECHNICAL-BRIEF.md) - Deep dive into system design and performance
+**TabRL solves both.** Run massively parallel physics simulations in your browser while Claude AI automatically generates and optimizes reward functions based on natural language task descriptions.
 
 ## 🌟 Unique Value Proposition
 
-**"The Jupyter Notebook of RL"** - Just as Jupyter democratized data science by making it interactive and shareable, MuJoCo WebSim democratizes RL research by making parallel simulation accessible to everyone.
+**"AI Training AI, All in Your Browser"** - TabRL represents a paradigm shift where LLMs guide the entire RL training process, from reward design to hyperparameter optimization.
 
-No more:
-- 💸 $1000s in cloud bills
-- 🔧 Complex Docker/K8s setups  
-- ⏰ Waiting hours for single-threaded training
-- 🚫 "Works on my machine" problems
+Traditional RL Development:
+- 💸 Expensive cloud infrastructure
+- 🔧 Manual reward function engineering
+- ⏰ Trial-and-error hyperparameter tuning
+- 🚫 Separate tools for simulation, training, and visualization
 
-Just:
-- 🌐 Open a browser
-- 🚀 Run hundreds of environments
-- 👀 Watch your agent learn
-- 🔗 Share with a URL
+TabRL Revolution:
+- 🤖 AI generates and optimizes reward functions
+- 🧠 Meta-learning finds best hyperparameters automatically
+- 🌐 Everything runs in your browser tab
+- 👀 Watch AI train AI in real-time
+- 📤 Export trained policies instantly
 
-## 🤝 Contributing
+## 📝 Future Improvements
 
-We're looking for help with:
-- WebGL-based rendering optimizations
-- RL algorithm implementations
-- Environment variety (manipulation, locomotion, multi-agent)
-- Performance profiling and optimization
+- [ ] More sophisticated neural network architectures
+- [ ] PPO/SAC algorithm implementations
+- [ ] Multi-task learning
+- [ ] Sim-to-real transfer experiments
+- [ ] Mobile browser support
+
+## 🙏 Acknowledgments
+
+- [MuJoCo WASM](https://github.com/zalo/mujoco_wasm) for physics engine
+- [Anthropic Claude](https://www.anthropic.com/) for LLM capabilities
+- Browser ML community for inspiration
 
 ## 📬 Contact
 
@@ -170,5 +241,6 @@ We're looking for help with:
 
 ---
 
-*Built with ❤️ at CV x AIWF Hackathon 2025*
-*Shoutouts to Claude 4 Opus and Windsurf for the AI assistance*
+*🏆 CV x AIWF Hackathon 2025 - Statement 3: Reasoning and Task RL*
+
+*Built with ❤️ using Claude Opus 4, Windsurf, and the power of browser-based ML*

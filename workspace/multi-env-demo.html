@@ -760,6 +760,10 @@
         </div>
     </div>
 
+    <!-- Load policy management scripts -->
+    <script src="./browser-rl.js"></script>
+    <script src="./load-trained-policy.js"></script>
+    
     <script type="module">
         // Import UI controls
         import * as uiControls from './ui-controls.js';
@@ -774,6 +778,37 @@
             console.log('- openModal:', typeof window.openModal);
             console.log('- Chart.js:', typeof Chart);
             console.log('- Three.js:', typeof THREE);
+            
+            // Check for trained policy
+            const trainedPolicy = window.loadTrainedPolicy();
+            if (trainedPolicy) {
+                console.log('Found trained policy:', trainedPolicy.metadata.policyName);
+                console.log('Average reward:', trainedPolicy.metadata.avgReward);
+                
+                // Store globally for use
+                window.trainedPolicyNetwork = trainedPolicy.policy;
+                
+                // Update UI to show policy is loaded
+                const policyStatus = document.createElement('div');
+                policyStatus.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    background: rgba(34, 197, 94, 0.2);
+                    border: 1px solid rgba(34, 197, 94, 0.5);
+                    padding: 10px 20px;
+                    border-radius: 8px;
+                    color: #22c55e;
+                    font-weight: 600;
+                    z-index: 1000;
+                `;
+                policyStatus.innerHTML = `✅ Using trained policy: ${trainedPolicy.metadata.policyName}`;
+                document.body.appendChild(policyStatus);
+                
+                setTimeout(() => policyStatus.remove(), 5000);
+            } else {
+                console.log('No trained policy found, using random actions');
+            }
             
             // Set up performance chart
             uiControls.updatePerformanceChart();

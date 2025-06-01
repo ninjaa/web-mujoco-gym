@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# API keys
+workspace/claude-config.js
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Docker
+*.log
