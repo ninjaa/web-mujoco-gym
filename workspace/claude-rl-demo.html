@@ -723,21 +723,23 @@ Ready to generate reward function when you describe a task! 🎯
                             const bodyPos = state.bodyPos || [0, 0, 0];
                             const bodyVel = state.bodyVel || [0, 0, 0];
                             
-                            // Forward progress reward
-                            let reward = bodyVel[0] * 2.0;
+                            // Base survival reward
+                            let reward = 1.0;
                             
-                            // Upright bonus (humanoid torso is around 1.3m when standing)
-                            if (bodyPos[2] > 1.0) {
-                                reward += 1.0;
-                            }
+                            // Forward progress reward (more generous)
+                            reward += Math.max(0, bodyVel[0]) * 3.0;
                             
-                            // Energy penalty (small to encourage efficiency)
-                            const energyPenalty = action.reduce((sum, a) => sum + a*a, 0) * 0.001;
+                            // Height reward (stay upright)
+                            const heightReward = Math.max(0, (bodyPos[2] - 0.8) * 2.0);
+                            reward += heightReward;
+                            
+                            // Small energy penalty
+                            const energyPenalty = action.reduce((sum, a) => sum + a*a, 0) * 0.0001;
                             reward -= energyPenalty;
                             
-                            // Falling penalty
-                            if (bodyPos[2] < 0.8) {
-                                reward -= 10.0;
+                            // Only penalize if really fallen
+                            if (bodyPos[2] < 0.5) {
+                                reward -= 5.0;
                             }
                             
                             return reward;

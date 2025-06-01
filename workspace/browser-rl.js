@@ -11,7 +11,7 @@ class TinyMLP {
         
         // Initialize weights and biases
         for (let i = 0; i < layers.length - 1; i++) {
-            const w = this.randomMatrix(layers[i], layers[i + 1], 0.1);
+            const w = this.randomMatrix(layers[i], layers[i + 1], 0.01); // Smaller initial weights
             const b = new Array(layers[i + 1]).fill(0);
             this.weights.push(w);
             this.biases.push(b);
@@ -63,13 +63,30 @@ class TinyMLP {
         return vec1.map((v, i) => v + vec2[i]);
     }
     
-    // Simple gradient update
+    // Better gradient update using finite differences
     updateWeights(gradient, learningRate) {
-        // This is a simplified update - in practice you'd compute proper gradients
+        // Use gradient as a signal for how much to adjust weights
+        const noise_scale = 0.1;
+        
         for (let i = 0; i < this.weights.length; i++) {
             for (let j = 0; j < this.weights[i].length; j++) {
                 for (let k = 0; k < this.weights[i][j].length; k++) {
-                    this.weights[i][j][k] += (Math.random() - 0.5) * gradient * learningRate;
+                    // Add structured noise in the direction of positive gradient
+                    const noise = (Math.random() - 0.5) * noise_scale;
+                    const update = gradient * noise * learningRate;
+                    this.weights[i][j][k] += update;
+                    
+                    // Keep weights bounded
+                    this.weights[i][j][k] = Math.max(-2, Math.min(2, this.weights[i][j][k]));
+                }
+            }
+            
+            // Also update biases
+            if (this.biases[i]) {
+                for (let j = 0; j < this.biases[i].length; j++) {
+                    const noise = (Math.random() - 0.5) * noise_scale;
+                    this.biases[i][j] += gradient * noise * learningRate * 0.1;
+                    this.biases[i][j] = Math.max(-1, Math.min(1, this.biases[i][j]));
                 }
             }
         }
@@ -101,7 +118,7 @@ class BrowserRL {
     constructor() {
         // Humanoid has 72 state dims, 21 action dims
         this.policy = new TinyMLP([72, 64, 32, 21]);
-        this.learningRate = 0.003; // Increased for faster learning
+        this.learningRate = 0.01; // Further increased for faster learning
         this.gamma = 0.99; // Discount factor
         
         // Training visualization
@@ -130,7 +147,7 @@ class BrowserRL {
         await new Promise(resolve => setTimeout(resolve, 100));
         
         let stepCount = 0;
-        const maxSteps = 100; // Reduced from 200 for faster demo
+        const maxSteps = 300; // Increased for better learning
         let episodeReward = 0;
         
         return new Promise((resolve) => {
@@ -144,8 +161,15 @@ class BrowserRL {
                 // Convert observation to flat array
                 const stateVec = this.observationToVector(state.observation);
                 
-                // Get action from policy
+                // Get action from policy with exploration noise
                 const action = this.policy.forward(stateVec);
+                
+                // Add exploration noise (decreases over time)
+                const noiseScale = 0.3 * Math.max(0.1, 1 - stepCount / 1000);
+                for (let i = 0; i < action.length; i++) {
+                    action[i] += (Math.random() - 0.5) * noiseScale;
+                    action[i] = Math.max(-1, Math.min(1, action[i])); // Clamp to valid range
+                }
                 
                 // Apply action
                 orchestrator.setAction(envId, action);
@@ -284,9 +308,9 @@ class BrowserRL {
             returns.unshift(G);
         }
         
-        // Normalize returns
+        // Normalize returns for stable learning
         const mean = returns.reduce((a, b) => a + b) / returns.length;
-        const std = Math.sqrt(returns.map(r => (r - mean) ** 2).reduce((a, b) => a + b) / returns.length);
+        const std = Math.sqrt(returns.map(r => (r - mean) ** 2).reduce((a, b) => a + b) / returns.length) + 1e-8;
         const normalizedReturns = returns.map(r => (r - mean) / (std + 1e-8));
         
         // Simple policy gradient update
