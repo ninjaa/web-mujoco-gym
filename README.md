@@ -261,7 +261,7 @@ TabRL Revolution:
 
 ## 📬 Contact
 
-- Hackathon Team: [aditya@bestparents.com]
+- Hackathon Team: [aditya@bestparents.com], [richa.flutr@gmail.com]
 - Project Leads: Aditya, Richa
 - GitHub: [ninjaa] [richafltr]
 
