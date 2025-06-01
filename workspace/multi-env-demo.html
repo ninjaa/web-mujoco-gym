@@ -116,15 +116,20 @@
         }
         
         .env-canvas {
-            width: 100%;
-            height: 250px;
+            width: 280px;
+            height: 230px;
             background: #1a1a1a;
             border-radius: 5px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #666;
             margin-bottom: 10px;
+            overflow: hidden;
+        }
+        
+        .env-canvas canvas {
+            cursor: pointer;
+        }
+        
+        .env-canvas canvas:hover {
+            opacity: 0.9;
         }
         
         .env-metrics {
@@ -211,6 +216,50 @@
             font-size: 16px;
             width: 80px;
         }
+        
+        .action-viz {
+            margin-top: 10px;
+            font-size: 10px;
+            display: none;
+        }
+        
+        .action-viz.show {
+            display: block;
+        }
+        
+        .action-bar {
+            display: flex;
+            align-items: center;
+            margin: 2px 0;
+        }
+        
+        .action-label {
+            width: 80px;
+            font-size: 9px;
+            text-overflow: ellipsis;
+            overflow: hidden;
+        }
+        
+        .action-meter {
+            flex: 1;
+            height: 8px;
+            background: #eee;
+            position: relative;
+            margin: 0 5px;
+        }
+        
+        .action-fill {
+            position: absolute;
+            height: 100%;
+            background: #4CAF50;
+            transition: width 0.1s;
+        }
+        
+        .action-value {
+            width: 40px;
+            text-align: right;
+            font-family: monospace;
+        }
     </style>
 </head>
 <body>
@@ -244,8 +293,10 @@
         </div>
         <button id="initBtn" onclick="initializeEnvironments()">Initialize</button>
         <button id="runBtn" onclick="runEpisode()" disabled>Run Episode</button>
+        <button id="stepBtn" onclick="runSingleStep()" disabled>Run Step</button>
         <button id="stopBtn" onclick="stopEpisode()" disabled>Stop</button>
         <button id="resetBtn" onclick="resetEnvironments()" disabled>Reset</button>
+        <button id="debugBtn" onclick="toggleDebug()">Toggle Debug</button>
     </div>
 
     <div class="stats">
@@ -280,98 +331,235 @@
         // Global variables
         let orchestrator = null;
         let isRunning = false;
-        let episodeCount = 0;
-        let performanceData = {
+        let lastUpdateTime = 0;
+        let frameCount = 0;
+        let episodeStartTime = 0;
+        let currentEpisodeStep = 0;
+        let perfChart = null;
+        let perfData = {
             fps: [],
+            envPerSec: [],
             rewards: [],
             timestamps: []
         };
+        let debugMode = false;
+        let actionVisualizers = {};
         
-        // Mock the RL orchestrator for demo purposes
-        class DemoRLOrchestrator {
+        const actuatorNames = [
+            'abdomen_y', 'abdomen_z', 'abdomen_x',
+            'hip_x_R', 'hip_z_R', 'hip_y_R', 'knee_R', 'ankle_x_R', 'ankle_y_R',
+            'hip_x_L', 'hip_z_L', 'hip_y_L', 'knee_L', 'ankle_x_L', 'ankle_y_L',
+            'shoulder1_R', 'shoulder2_R', 'elbow_R',
+            'shoulder1_L', 'shoulder2_L', 'elbow_L'
+        ];
+        
+        // Logging function
+        function log(message, type = 'info') {
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+        
+        // Real MuJoCo RL orchestrator using Web Workers
+        class MuJoCoRLOrchestrator {
             constructor(numEnvironments, numWorkers) {
                 this.numEnvironments = numEnvironments;
                 this.numWorkers = numWorkers;
+                this.workers = [];
                 this.environments = [];
-                this.lastFrameTime = performance.now();
-                this.frameCount = 0;
-            }
-            
-            async initialize() {
-                // Simulate initialization
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                this.environmentType = 'ant'; // default
+                this.isInitialized = false;
+                this.pendingCallbacks = new Map();
+                this.canvases = {};
+                this.contexts = {};
                 
-                // Create mock environments
-                for (let i = 0; i < this.numEnvironments; i++) {
+                // Create environments
+                for (let i = 0; i < numEnvironments; i++) {
                     this.environments.push({
                         id: i,
-                        status: 'ready',
+                        workerId: i % numWorkers,
+                        state: 'idle',
+                        observation: null,
                         reward: 0,
-                        steps: 0,
-                        position: { x: 0, y: 0 },
-                        velocity: { x: 0, y: 0 }
+                        totalReward: 0,
+                        stepCount: 0
                     });
                 }
             }
             
+            async initialize(envType = 'ant') {
+                this.environmentType = envType;
+                
+                // Create workers
+                for (let i = 0; i < this.numWorkers; i++) {
+                    const worker = new Worker('/workspace/mujoco-rl-worker.js', { type: 'module' });
+                    
+                    worker.onmessage = (e) => {
+                        this.handleWorkerMessage(i, e.data);
+                    };
+                    
+                    worker.onerror = (error) => {
+                        console.error(`Worker ${i} error:`, error);
+                        log(`Worker ${i} error: ${error.message}`, 'error');
+                    };
+                    
+                    this.workers.push(worker);
+                }
+                
+                // Initialize environments in workers
+                const initPromises = this.environments.map(env => {
+                    return new Promise((resolve, reject) => {
+                        const callbackId = `init_${env.id}`;
+                        this.pendingCallbacks.set(callbackId, { resolve, reject });
+                        
+                        this.workers[env.workerId].postMessage({
+                            type: 'init',
+                            data: {
+                                envId: env.id,
+                                envType: this.environmentType
+                            }
+                        });
+                    });
+                });
+                
+                try {
+                    await Promise.all(initPromises);
+                    this.isInitialized = true;
+                    log(`Initialized ${this.numEnvironments} ${this.environmentType} environments`, 'success');
+                } catch (error) {
+                    console.error('Failed to initialize environments:', error);
+                    throw error;
+                }
+            }
+            
+            handleWorkerMessage(workerId, message) {
+                const { type, data } = message;
+                
+                switch (type) {
+                    case 'initialized':
+                        const initCallback = this.pendingCallbacks.get(`init_${data.envId}`);
+                        if (initCallback) {
+                            this.pendingCallbacks.delete(`init_${data.envId}`);
+                            if (data.success) {
+                                this.environments[data.envId].state = 'ready';
+                                initCallback.resolve();
+                            } else {
+                                initCallback.reject(new Error('Initialization failed'));
+                            }
+                        }
+                        break;
+                        
+                    case 'step':
+                        const env = this.environments[data.envId];
+                        if (env) {
+                            env.observation = data.observation;
+                            env.reward = data.reward;
+                            env.totalReward = data.info.totalReward;
+                            env.stepCount = data.info.stepCount;
+                            
+                            if (data.done) {
+                                // Reset environment automatically
+                                this.workers[env.workerId].postMessage({
+                                    type: 'reset',
+                                    data: { envId: env.id }
+                                });
+                            }
+                        }
+                        break;
+                        
+                    case 'reset':
+                        const resetEnv = this.environments[data.envId];
+                        if (resetEnv) {
+                            resetEnv.observation = data.observation;
+                            resetEnv.reward = 0;
+                            resetEnv.totalReward = 0;
+                            resetEnv.stepCount = 0;
+                        }
+                        break;
+                        
+                    case 'error':
+                        console.error(`Environment ${data.envId} error:`, data.error);
+                        log(`Env ${data.envId} error: ${data.error}`, 'error');
+                        break;
+                }
+            }
+            
             async runStep() {
-                // Simulate physics step
-                for (let env of this.environments) {
-                    // Random walk for demo
-                    env.velocity.x += (Math.random() - 0.5) * 0.1;
-                    env.velocity.y += (Math.random() - 0.5) * 0.1;
+                if (!this.isInitialized) return;
+                
+                // Generate random actions for each environment
+                const actions = {};
+                
+                for (const env of this.environments) {
+                    if (env.done && document.getElementById('autoResetCheckbox').checked) {
+                        // Reset done environments
+                        this.workers[env.workerId].postMessage({
+                            type: 'reset',
+                            envId: env.id
+                        });
+                        env.done = false;
+                        env.totalReward = 0;
+                    }
                     
-                    // Apply velocity
-                    env.position.x += env.velocity.x;
-                    env.position.y += env.velocity.y;
+                    // For humanoid, we need 21 actions
+                    const numActions = 21;
+                    const envActions = [];
+                    for (let i = 0; i < numActions; i++) {
+                        envActions.push((Math.random() - 0.5) * 2); // Random between -1 and 1
+                    }
+                    actions[env.id] = envActions;
                     
-                    // Calculate reward (distance from origin)
-                    const distance = Math.sqrt(env.position.x ** 2 + env.position.y ** 2);
-                    env.reward = -distance;
-                    
-                    env.steps++;
-                    
-                    // Reset if too far
-                    if (distance > 10) {
-                        env.position = { x: 0, y: 0 };
-                        env.velocity = { x: 0, y: 0 };
+                    // Update action visualizer if in debug mode
+                    if (debugMode && actionVisualizers[env.id]) {
+                        updateActionVisualizer(env.id, envActions);
                     }
                 }
                 
-                // Calculate FPS
-                this.frameCount++;
-                const now = performance.now();
-                const delta = now - this.lastFrameTime;
-                
-                if (delta > 1000) {
-                    const fps = (this.frameCount * 1000) / delta;
-                    document.getElementById('fps').textContent = fps.toFixed(1);
-                    this.frameCount = 0;
-                    this.lastFrameTime = now;
-                    return fps;
+                // Send actions to workers
+                for (let workerId = 0; workerId < this.numWorkers; workerId++) {
+                    const workerEnvs = this.environments.filter(e => e.workerId === workerId);
+                    const workerActions = {};
+                    workerEnvs.forEach(env => {
+                        workerActions[env.id] = actions[env.id];
+                    });
+                    
+                    this.workers[workerId].postMessage({
+                        type: 'step',
+                        actions: workerActions
+                    });
                 }
                 
-                return null;
+                // Return current states for visualization
+                return this.environments.map(env => ({
+                    id: env.id,
+                    position: env.observation ? env.observation.position : [0, 0, 0],
+                    observation: env.observation,
+                    reward: env.reward,
+                    totalReward: env.totalReward,
+                    stepCount: env.stepCount
+                }));
             }
             
             getAverageReward() {
-                const sum = this.environments.reduce((acc, env) => acc + env.reward, 0);
-                return sum / this.environments.length;
+                const totalReward = this.environments.reduce((sum, env) => sum + env.totalReward, 0);
+                return totalReward / this.environments.length;
             }
             
             reset() {
-                for (let env of this.environments) {
-                    env.position = { x: 0, y: 0 };
-                    env.velocity = { x: 0, y: 0 };
+                this.environments.forEach(env => {
+                    this.workers[env.workerId].postMessage({
+                        type: 'reset',
+                        data: { envId: env.id }
+                    });
                     env.reward = 0;
-                    env.steps = 0;
-                }
+                    env.totalReward = 0;
+                    env.stepCount = 0;
+                });
             }
         }
         
         async function initializeEnvironments() {
             const numEnvs = parseInt(document.getElementById('numEnvs').value);
             const numWorkers = parseInt(document.getElementById('numWorkers').value);
+            const sceneType = document.getElementById('sceneSelect').value;
             
             // Show loading
             document.getElementById('loadingScreen').classList.remove('hidden');
@@ -381,8 +569,8 @@
             
             try {
                 // Create orchestrator
-                orchestrator = new DemoRLOrchestrator(numEnvs, numWorkers);
-                await orchestrator.initialize();
+                orchestrator = new MuJoCoRLOrchestrator(numEnvs, numWorkers);
+                await orchestrator.initialize(sceneType);
                 
                 // Create environment UI
                 createEnvironmentUI(numEnvs);
@@ -392,12 +580,15 @@
                 
                 // Enable controls
                 document.getElementById('runBtn').disabled = false;
+                document.getElementById('stepBtn').disabled = false;
                 document.getElementById('resetBtn').disabled = false;
                 
+                log('[INFO] Environments initialized successfully', 'success');
             } catch (error) {
-                console.error('Initialization failed:', error);
-                alert('Failed to initialize environments: ' + error.message);
+                log(`[ERROR] Failed to initialize: ${error.message}`, 'error');
+                document.getElementById('initBtn').disabled = false;
             } finally {
+                // Hide loading
                 document.getElementById('loadingScreen').classList.add('hidden');
             }
         }
@@ -427,9 +618,20 @@
                             <span class="metric-label">Steps</span>
                         </div>
                         <div class="metric">
-                            <span class="metric-value" id="pos-${i}">(0,0)</span>
+                            <span class="metric-value" id="pos-${i}">(0,0,0)</span>
                             <span class="metric-label">Position</span>
                         </div>
+                    </div>
+                    <div class="action-viz ${debugMode ? 'show' : ''}" id="action-viz-${i}">
+                        ${actuatorNames.map((name, idx) => `
+                            <div class="action-bar">
+                                <div class="action-label">${name}</div>
+                                <div class="action-meter">
+                                    <div class="action-fill" id="action-${i}-${idx}" style="width: 50%; left: 50%"></div>
+                                </div>
+                                <div class="action-value" id="action-val-${i}-${idx}">0.00</div>
+                            </div>
+                        `).join('')}
                     </div>
                 `;
                 grid.appendChild(envDiv);
@@ -437,67 +639,135 @@
                 // Initialize canvas
                 const canvas = document.getElementById(`env-canvas-${i}`);
                 const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#1a1a1a';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Store canvas and context for rendering in orchestrator
+                if (orchestrator) {
+                    orchestrator.canvases[i] = canvas;
+                    orchestrator.contexts[i] = ctx;
+                }
+                
+                // Initialize action visualizer tracking
+                actionVisualizers[i] = true;
             }
+            
+            log('[INFO] Environment grid created', 'info');
         }
         
         async function runEpisode() {
-            if (isRunning) return;
+            if (!orchestrator || isRunning) return;
             
             isRunning = true;
-            episodeCount++;
+            episodeStartTime = Date.now();
+            currentEpisodeStep = 0;
             
             document.getElementById('runBtn').disabled = true;
+            document.getElementById('stepBtn').disabled = true;
             document.getElementById('stopBtn').disabled = false;
-            document.getElementById('episodes').textContent = episodeCount;
             
             // Animation loop
             async function animate() {
                 if (!isRunning) return;
                 
-                // Step simulation
-                const fps = await orchestrator.runStep();
+                const states = await orchestrator.runStep();
+                updateEnvironmentVisuals(states);
                 
-                // Update visualizations
-                updateEnvironmentVisuals();
+                // Update FPS
+                const now = Date.now();
+                const deltaTime = now - lastUpdateTime;
+                if (deltaTime > 1000) {
+                    const fps = Math.round((frameCount * 1000) / deltaTime);
+                    document.getElementById('fps').textContent = fps;
+                    frameCount = 0;
+                    lastUpdateTime = now;
+                }
+                frameCount++;
                 
                 // Update average reward
                 const avgReward = orchestrator.getAverageReward();
                 document.getElementById('avgReward').textContent = avgReward.toFixed(2);
                 
                 // Record performance data
-                if (fps !== null) {
-                    performanceData.fps.push(fps);
-                    performanceData.rewards.push(avgReward);
-                    performanceData.timestamps.push(Date.now());
-                    updatePerformanceChart();
-                }
+                perfData.rewards.push(avgReward);
+                perfData.timestamps.push(Date.now());
+                updatePerformanceChart();
                 
                 // Continue animation
-                requestAnimationFrame(animate);
+                if (isRunning) {
+                    requestAnimationFrame(animate);
+                }
             }
             
             animate();
         }
         
-        function updateEnvironmentVisuals() {
-            for (let i = 0; i < orchestrator.environments.length; i++) {
-                const env = orchestrator.environments[i];
+        async function runSingleStep() {
+            if (!orchestrator || isRunning) return;
+            
+            // Temporarily disable buttons
+            document.getElementById('stepBtn').disabled = true;
+            
+            try {
+                const states = await orchestrator.runStep();
+                updateEnvironmentVisuals(states);
+                
+                // Update average reward
+                const avgReward = orchestrator.getAverageReward();
+                document.getElementById('avgReward').textContent = avgReward.toFixed(2);
+                
+                // Update performance data
+                perfData.rewards.push(avgReward);
+                perfData.timestamps.push(Date.now());
+                updatePerformanceChart();
+                
+                log('[INFO] Step completed', 'info');
+            } catch (error) {
+                log(`[ERROR] Step failed: ${error.message}`, 'error');
+            } finally {
+                // Re-enable button
+                document.getElementById('stepBtn').disabled = false;
+            }
+        }
+        
+        function stopEpisode() {
+            isRunning = false;
+            document.getElementById('runBtn').disabled = false;
+            document.getElementById('stepBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            log('[INFO] Episode stopped', 'info');
+        }
+        
+        function resetEnvironments() {
+            if (orchestrator) {
+                orchestrator.reset();
+                updateEnvironmentVisuals(orchestrator.environments.map(env => ({
+                    id: env.id,
+                    position: [0, 0, 0],
+                    observation: null,
+                    reward: 0,
+                    totalReward: 0,
+                    stepCount: 0
+                })));
+                document.getElementById('avgReward').textContent = '0.00';
+            }
+        }
+        
+        function updateEnvironmentVisuals(states) {
+            states.forEach(state => {
+                const envId = state.id;
                 
                 // Update status
-                const statusEl = document.getElementById(`status-${i}`);
+                const statusEl = document.getElementById(`status-${envId}`);
                 statusEl.textContent = 'Active';
                 statusEl.classList.add('active');
                 
                 // Update metrics
-                document.getElementById(`reward-${i}`).textContent = env.reward.toFixed(2);
-                document.getElementById(`steps-${i}`).textContent = env.steps;
-                document.getElementById(`pos-${i}`).textContent = 
-                    `(${env.position.x.toFixed(1)},${env.position.y.toFixed(1)})`;
+                document.getElementById(`reward-${envId}`).textContent = state.reward.toFixed(2);
+                document.getElementById(`steps-${envId}`).textContent = state.stepCount;
+                document.getElementById(`pos-${envId}`).textContent = 
+                    `(${state.position[0].toFixed(1)},${state.position[1].toFixed(1)},${state.position[2].toFixed(1)})`;
                 
                 // Draw on canvas
-                const canvas = document.getElementById(`env-canvas-${i}`);
+                const canvas = document.getElementById(`env-canvas-${envId}`);
                 const ctx = canvas.getContext('2d');
                 
                 // Clear canvas
@@ -506,7 +776,7 @@
                 
                 // Draw grid
                 ctx.strokeStyle = '#333';
-                ctx.lineWidth = 1;
+                ctx.lineWidth = 0.5;
                 for (let x = 0; x < canvas.width; x += 20) {
                     ctx.beginPath();
                     ctx.moveTo(x, 0);
@@ -520,45 +790,87 @@
                     ctx.stroke();
                 }
                 
-                // Draw agent
-                const centerX = canvas.width / 2;
-                const centerY = canvas.height / 2;
-                const agentX = centerX + env.position.x * 20;
-                const agentY = centerY + env.position.y * 20;
-                
-                ctx.fillStyle = '#4a9eff';
-                ctx.beginPath();
-                ctx.arc(agentX, agentY, 8, 0, Math.PI * 2);
-                ctx.fill();
-                
-                // Draw velocity vector
-                ctx.strokeStyle = '#4ade80';
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(agentX, agentY);
-                ctx.lineTo(agentX + env.velocity.x * 50, agentY + env.velocity.y * 50);
-                ctx.stroke();
-            }
+                // Draw humanoid stick figure
+                if (state.observation && state.observation.qpos) {
+                    drawStickFigure(ctx, canvas, state.position, state.observation.qpos);
+                } else {
+                    // Fallback to simple dot
+                    const x = canvas.width / 2 + state.position[0] * 10;
+                    const y = canvas.height / 2 - state.position[2] * 10; // z is up in MuJoCo
+                    
+                    ctx.fillStyle = '#4a9eff';
+                    ctx.beginPath();
+                    ctx.arc(x, y, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
         }
         
-        function stopEpisode() {
-            isRunning = false;
-            document.getElementById('runBtn').disabled = false;
-            document.getElementById('stopBtn').disabled = true;
+        function drawStickFigure(ctx, canvas, position, qpos) {
+            // Center the figure on canvas
+            const centerX = canvas.width / 2 + position[0] * 10;
+            const centerY = canvas.height / 2 - position[2] * 10; // z is up
             
-            // Update status indicators
-            for (let i = 0; i < orchestrator.environments.length; i++) {
-                const statusEl = document.getElementById(`status-${i}`);
-                statusEl.textContent = 'Stopped';
-                statusEl.classList.remove('active');
-            }
-        }
-        
-        function resetEnvironments() {
-            if (orchestrator) {
-                orchestrator.reset();
-                updateEnvironmentVisuals();
-                document.getElementById('avgReward').textContent = '0.00';
+            // Scale factor for the stick figure
+            const scale = 20;
+            
+            // Draw torso
+            ctx.strokeStyle = '#4a9eff';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(centerX, centerY - scale);
+            ctx.stroke();
+            
+            // Draw head
+            ctx.fillStyle = '#4a9eff';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY - scale - 8, 6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw legs (simplified)
+            ctx.strokeStyle = '#4a9eff';
+            ctx.lineWidth = 2;
+            
+            // Right leg
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(centerX + 8, centerY + scale * 0.8);
+            ctx.lineTo(centerX + 10, centerY + scale * 1.5);
+            ctx.stroke();
+            
+            // Left leg
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.lineTo(centerX - 8, centerY + scale * 0.8);
+            ctx.lineTo(centerX - 10, centerY + scale * 1.5);
+            ctx.stroke();
+            
+            // Draw arms
+            // Right arm
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY - scale * 0.7);
+            ctx.lineTo(centerX + 12, centerY - scale * 0.5);
+            ctx.lineTo(centerX + 15, centerY - scale * 0.2);
+            ctx.stroke();
+            
+            // Left arm
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY - scale * 0.7);
+            ctx.lineTo(centerX - 12, centerY - scale * 0.5);
+            ctx.lineTo(centerX - 15, centerY - scale * 0.2);
+            ctx.stroke();
+            
+            // Add motion indicator
+            if (Math.abs(position[0]) > 0.1) {
+                ctx.strokeStyle = 'rgba(74, 158, 255, 0.3)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(centerX - position[0] * 5, centerY);
+                ctx.lineTo(centerX, centerY);
+                ctx.stroke();
+                ctx.setLineDash([]);
             }
         }
         
@@ -585,17 +897,17 @@
             ctx.stroke();
             
             // Draw FPS chart
-            if (performanceData.fps.length > 1) {
+            if (perfData.rewards.length > 1) {
                 ctx.strokeStyle = '#4a9eff';
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 
-                const maxFps = Math.max(...performanceData.fps);
-                const xStep = (canvas.width - 60) / (performanceData.fps.length - 1);
+                const maxReward = Math.max(...perfData.rewards);
+                const xStep = (canvas.width - 60) / (perfData.rewards.length - 1);
                 
-                for (let i = 0; i < performanceData.fps.length; i++) {
+                for (let i = 0; i < perfData.rewards.length; i++) {
                     const x = 40 + i * xStep;
-                    const y = canvas.height - 30 - (performanceData.fps[i] / maxFps) * (canvas.height - 50);
+                    const y = canvas.height - 30 - (perfData.rewards[i] / maxReward) * (canvas.height - 50);
                     
                     if (i === 0) {
                         ctx.moveTo(x, y);
@@ -608,22 +920,63 @@
                 // Label
                 ctx.fillStyle = '#4a9eff';
                 ctx.font = '12px sans-serif';
-                ctx.fillText('FPS', 45, 35);
+                ctx.fillText('Reward', 45, 35);
             }
             
             // Keep only last 100 data points
-            if (performanceData.fps.length > 100) {
-                performanceData.fps = performanceData.fps.slice(-100);
-                performanceData.rewards = performanceData.rewards.slice(-100);
-                performanceData.timestamps = performanceData.timestamps.slice(-100);
+            if (perfData.rewards.length > 100) {
+                perfData.rewards = perfData.rewards.slice(-100);
+                perfData.timestamps = perfData.timestamps.slice(-100);
             }
+        }
+        
+        function updateActionVisualizer(envId, actions) {
+            actions.forEach((action, idx) => {
+                const fill = document.getElementById(`action-${envId}-${idx}`);
+                const val = document.getElementById(`action-val-${envId}-${idx}`);
+                if (fill && val) {
+                    // Map action from [-1, 1] to [0%, 100%]
+                    const percent = (action + 1) * 50;
+                    if (action >= 0) {
+                        fill.style.left = '50%';
+                        fill.style.width = `${percent - 50}%`;
+                        fill.style.background = '#4CAF50';
+                    } else {
+                        fill.style.left = `${percent}%`;
+                        fill.style.width = `${50 - percent}%`;
+                        fill.style.background = '#f44336';
+                    }
+                    val.textContent = action.toFixed(2);
+                }
+            });
+        }
+        
+        function toggleDebug() {
+            debugMode = !debugMode;
+            document.querySelectorAll('.action-viz').forEach(viz => {
+                viz.classList.toggle('show', debugMode);
+            });
         }
         
         // Initialize on load
         window.addEventListener('load', () => {
             // Set up performance chart
             updatePerformanceChart();
+            
+            // Add click handlers for environment canvases
+            document.addEventListener('click', (e) => {
+                if (e.target.tagName === 'CANVAS' && e.target.id.startsWith('env-canvas-')) {
+                    const envId = parseInt(e.target.id.replace('env-canvas-', ''));
+                    openEnvironmentZoom(envId);
+                }
+            });
         });
+        
+        function openEnvironmentZoom(envId) {
+            // TODO: Implement 3D visualization popup for the selected environment
+            console.log(`Opening 3D view for environment ${envId}`);
+            alert(`3D view for environment ${envId} - Coming soon!`);
+        }
     </script>
 </body>
 </html>

@@ -123,6 +123,12 @@ http://localhost:8080/workspace/mujoco-simple-test.html # Real MuJoCo test
 - [ ] Performance comparison vs traditional approaches
 - [ ] Prepare 3-minute pitch
 
+## 📚 Technical Documentation
+
+- [**Project Status & Demo Guide**](./PROJECT-STATUS.md) - Current implementation status and demo instructions
+- [MuJoCo Array Mapping Guide](./MUJOCO-ARRAY-MAPPING.md) - Understanding how MuJoCo XML models map to WASM arrays
+- [Technical Architecture Brief](./TECHNICAL-BRIEF.md) - Deep dive into system design and performance
+
 ## 🌟 Unique Value Proposition
 
 **"The Jupyter Notebook of RL"** - Just as Jupyter democratized data science by making it interactive and shareable, MuJoCo WebSim democratizes RL research by making parallel simulation accessible to everyone.
@@ -149,10 +155,11 @@ We're looking for help with:
 
 ## 📬 Contact
 
-- Hackathon Team: [your-email]
-- Project Lead: Aditya
-- GitHub: [your-github]
+- Hackathon Team: [aditya@bestparents.com]
+- Project Leads: Aditya, Richa
+- GitHub: [ninjaa]
 
 ---
 
-*Built with ❤️ at [Hackathon Name] 2025*
+*Built with ❤️ at CV x AIWF Hackathon 2025*
+*Shoutouts to Claude 4 Opus and Windsurf for the AI assistance*
