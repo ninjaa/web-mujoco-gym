@@ -1,4 +1,5 @@
 // UI Control functions for MuJoCo demo
+import { drawJazzyEnvironment } from './visualization-2d-jazzy.js';
 
 // Global state
 export const state = {
@@ -129,7 +130,7 @@ export async function renderLoop() {
         }));
         
         // Update visualizations
-        const { drawStickFigure, drawCoordinateAxes } = await import('./visualization-2d.js');
+        // Visualization functions now come from jazzy module
         
         updatedStates.forEach((envState) => {
             const canvas = document.getElementById(`env-canvas-${envState.id}`);
@@ -137,77 +138,8 @@ export async function renderLoop() {
             
             const ctx = canvas.getContext('2d');
             
-            // Clear canvas
-            ctx.fillStyle = '#2d2d2d';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw coordinate axes
-            drawCoordinateAxes(ctx, canvas.width, canvas.height);
-            
-            // Draw grid
-            ctx.strokeStyle = '#3a3a3a';
-            ctx.lineWidth = 1;
-            for (let i = 0; i < canvas.width; i += 40) {
-                ctx.beginPath();
-                ctx.moveTo(i, 0);
-                ctx.lineTo(i, canvas.height);
-                ctx.stroke();
-            }
-            for (let i = 0; i < canvas.height; i += 40) {
-                ctx.beginPath();
-                ctx.moveTo(0, i);
-                ctx.lineTo(canvas.width, i);
-                ctx.stroke();
-            }
-            
-            // Calculate position with bounds checking
-            const centerX = canvas.width / 2;
-            const centerY = canvas.height / 2;
-            
-            let x = centerX;
-            let y = centerY;
-            
-            // Determine if robot has fallen
-            let fallen = false;
-            let fallAngle = 0;
-            if (envState.observation) {
-                // Use bodyPos[0] for X position, bodyPos[2] for height
-                x = centerX + (envState.observation.bodyPos[0] || 0) * 20;
-                let height = envState.observation.bodyPos[2] || 0;
-                fallen = height < 0.3; // Consider fallen if torso is below 0.3m
-                
-                // Calculate fall angle based on height
-                if (fallen) {
-                    // Rotate more as height decreases
-                    fallAngle = Math.PI / 2 * (1 - Math.max(0, height) / 0.3);
-                }
-                
-                // Clamp to canvas bounds
-                x = Math.max(30, Math.min(canvas.width - 30, x));
-            }
-            
-            // Draw stick figure with physics data and fall rotation
-            
-            // Draw shadow first (no rotation)
-            if (fallen) {
-                ctx.save();
-                ctx.globalAlpha = 0.3;
-                ctx.fillStyle = '#ff4444';
-                ctx.beginPath();
-                ctx.ellipse(x, y + 45, 35, 15, 0, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
-            }
-            
-            // Draw rotated stick figure
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.rotate(fallAngle);
-            ctx.translate(-x, -y);
-            
-            // Temporarily disable shadow in drawStickFigure by passing fallen=false
-            drawStickFigure(ctx, x, y, '#4a9eff', false, envState.observation);
-            ctx.restore();
+            // Use jazzy visualization
+            drawJazzyEnvironment(ctx, canvas, envState);
             
             // Update metrics display
             const rewardEl = document.getElementById(`reward-${envState.id}`);
