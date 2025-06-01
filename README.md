@@ -253,6 +253,28 @@ TabRL Revolution:
 - [ ] Sim-to-real transfer experiments
 - [ ] Mobile browser support
 
+## 📚 Further Reading & Resources
+
+Here are some resources that provide more context or are related to the technologies used in this project:
+
+*   **MuJoCo Physics Engine:**
+    *   [Official MuJoCo Website](https://mujoco.org/) - Main page for the MuJoCo physics simulator.
+    *   [MuJoCo Documentation](https://mujoco.readthedocs.io/en/latest/) - Detailed documentation on using MuJoCo.
+    *   [DeepMind's Acquisition of MuJoCo](https://deepmind.google/discover/blog/mujoco-for-all/) - Blog post about MuJoCo becoming open-source.
+*   **Reinforcement Learning (RL):**
+    *   [Sutton and Barto, Reinforcement Learning: An Introduction (2nd Edition)](http://incompleteideas.net/book/the-book-2nd.html) - The foundational textbook for RL.
+    *   [OpenAI Spinning Up in Deep RL](https://spinningup.openai.com/en/latest/) - A great educational resource by OpenAI for learning about deep RL.
+    *   [Stable Baselines3](https://stable-baselines3.readthedocs.io/en/master/) - A popular library of reliable RL algorithm implementations (though this project uses its own).
+*   **WebAssembly (WASM):**
+    *   [WebAssembly Official Site](https://webassembly.org/) - Learn more about WASM.
+    *   [MDN Web Docs on WebAssembly](https://developer.mozilla.org/en-US/docs/WebAssembly) - Comprehensive documentation for web developers.
+*   **Actor-Critic Methods (relevant to the diagram):**
+    *   [Lil'Log: Policy Gradient Algorithms](https://lilianweng.github.io/posts/2018-04-08-policy-gradient/) - A good blog post explaining policy gradients and actor-critic methods.
+*   **This Project's Inspirations (Hypothetical, can be customized):**
+    *   [Example: "Massively Parallel Methods for Deep Reinforcement Learning"](https://arxiv.org/abs/1507.04296) - (Replace with actual papers or projects if they exist)
+    *   [Example: "Automated Curriculum Learning for RL"](https://arxiv.org/abs/1707.00183) - (Replace with actual papers or projects if they exist)
+
+
 ## 🙏 Acknowledgments
 
 - [MuJoCo WASM](https://github.com/zalo/mujoco_wasm) for physics engine
