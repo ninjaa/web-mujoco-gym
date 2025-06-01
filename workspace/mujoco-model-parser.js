@@ -39,6 +39,18 @@ export class MuJoCoModelParser {
             let bodyIndex = 0;
             const bodyMap = {};
             
+            // Add world body with index 0
+            const worldBody = {
+                name: 'world',
+                index: bodyIndex++,
+                parent: null,
+                position: [0, 0, 0],
+                quaternion: [1, 0, 0, 0],
+                geoms: [],
+                children: []
+            };
+            this.bodies.unshift(worldBody);
+            
             // First pass: create a map of all bodies
             function mapBodies(bodyArray) {
                 bodyArray.forEach(body => {
