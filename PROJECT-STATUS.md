@@ -4,6 +4,12 @@
 
 We successfully created a browser-based parallel MuJoCo simulation that runs multiple physics environments simultaneously using Web Workers. This is the foundation for **"The Jupyter Notebook of RL"** - democratizing parallel RL simulation with zero infrastructure.
 
+### Latest Updates (v2)
+- **Modular Architecture**: Refactored monolithic HTML into focused ES6 modules
+- **3D Visualization**: Click any environment to open interactive Three.js modal
+- **Action Visualizer**: Real-time display of all 21 humanoid actuators
+- **Debug Mode**: Toggle to see actuator values with smooth animations
+
 ## 🎯 Current Working Demo
 
 ### Live Demo
@@ -16,22 +22,32 @@ http://localhost:8080/workspace/multi-env-demo.html
 ```
 
 ### What You'll See
-- **12+ Humanoid robots** running in parallel (stick figure visualization)
+- **4-100+ Humanoid robots** running in parallel (2D stick figure visualization)
 - **Real MuJoCo physics** with 21 actuators per humanoid
-- **Debug panel** showing all actuator values in real-time
-- **Manual stepping** with "Run Step" button for debugging
-- **Performance metrics** tracking FPS and rewards
+- **3D Modal**: Click any robot to see Three.js visualization
+- **Action bars**: Debug mode shows all actuator values in real-time
+- **Episode tracking**: Automatic reset when robots fall (torso < 0.1m)
+
+### How the Faux RL Works
+Currently using random actions to simulate RL training:
+1. **Episode Start**: Robot spawns standing (z=1.282m)
+2. **Actions**: Random values [-1, 1] sent to 21 actuators
+3. **Physics**: MuJoCo simulates, robot usually falls quickly
+4. **Reset**: When fallen (torso < 0.1m), new episode begins
+5. **Repeat**: Continuous loop simulating training process
 
 ### Technical Achievement
 - **True parallelism** via Web Workers (not just async)
 - **Real physics** - MuJoCo WASM with joints, contacts, gravity
 - **Zero infrastructure** - runs entirely in browser
 - **Scalable architecture** - tested up to 100+ environments
+- **Clean separation** - Physics in workers, rendering on main thread
 
 ## 📊 Performance & Scale
 
 ### Current Performance
 - **12 environments**: 60 FPS rendering, physics uncapped
+- **100 environments**: 30+ FPS with optimizations
 - **Memory per env**: ~50MB (MuJoCo WASM instance)
 - **Actuators**: 21 per humanoid, all controllable
 
@@ -61,10 +77,26 @@ http://localhost:8080/workspace/multi-env-demo.html
 ```
 
 ### Key Design Decisions
-1. **2D Visualization** - Stick figures for performance (3D coming)
+1. **2D Visualization** - Stick figures for performance (3D modal for details)
 2. **Worker Distribution** - Round-robin environments across workers
 3. **Message Batching** - Reduces overhead (planned optimization)
 4. **Direct Array Access** - Following MuJoCo WASM best practices
+5. **Modular Architecture** - Easy to extend and debug
+
+## 📁 Code Structure (v2)
+
+### Core Modules
+- `multi-env-demo.html` - Main demo page (minimal, imports modules)
+- `mujoco-orchestrator.js` - Worker pool management
+- `mujoco-rl-worker-v2.js` - MuJoCo physics in Web Workers
+- `ui-controls.js` - UI state and render loop
+- `visualization-2d.js` - 2D stick figure rendering
+- `threejs-modal.js` - 3D popup visualization
+
+### Legacy Files (archived)
+- `multi-env-demo-v1.html` - Original monolithic version
+- `mujoco-rl-worker.js` - Original worker (kept for compatibility)
+- Test files moved to `/archive` folder
 
 ## ❓ Immediate Questions & TODOs
 
@@ -74,10 +106,9 @@ http://localhost:8080/workspace/multi-env-demo.html
 3. **Resource Prediction**: How to calculate memory/CPU needs?
 
 ### Next Technical Steps
-1. **3D Zoom View**: Three.js view into individual robots
-2. **RL Integration**: Connect actual policies (PPO/SAC)
-3. **Meaningful Actions**: Replace random with trained behaviors
-4. **Interactivity**: Manual actuator control, drag forces
+1. **RL Integration**: Connect actual policies (PPO/SAC)
+2. **Meaningful Actions**: Replace random with trained behaviors
+3. **Interactivity**: Manual actuator control, drag forces
 
 ## 💡 Why This Matters
 
@@ -118,19 +149,6 @@ http://localhost:8080/workspace/multi-env-demo.html
 - "Imagine sharing your agent with a URL"
 - "The future of RL is accessible"
 
-## 📁 Code Structure
-
-### Core Files
-- `multi-env-demo.html` - Main demo and UI
-- `mujoco-rl-worker.js` - Web Worker running MuJoCo physics
-- `humanoid.xml` - Real MuJoCo humanoid model
-
-### Documentation
-- `README.md` - Project overview and vision
-- `PROJECT-STATUS.md` - This file (current status)
-- `MUJOCO-ARRAY-MAPPING.md` - Technical guide for MuJoCo arrays
-- `TECHNICAL-BRIEF.md` - Architecture deep dive
-
 ## 🚦 Ready for Demo?
 
 **YES!** The current implementation is demo-ready:
@@ -140,7 +158,6 @@ http://localhost:8080/workspace/multi-env-demo.html
 - ✅ Clean UI with dark theme
 
 **Polish items** (time permitting):
-- 3D zoom view for individual robots
 - Better motion (trained policies)
 - Performance optimizations
 - More robot types
