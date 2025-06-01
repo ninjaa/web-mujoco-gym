@@ -790,6 +790,9 @@
                     ctx.stroke();
                 }
                 
+                // Draw coordinate axes
+                drawCoordinateAxes(ctx, canvas);
+                
                 // Draw humanoid stick figure
                 if (state.observation && state.observation.qpos) {
                     drawStickFigure(ctx, canvas, state.position, state.observation.qpos);
@@ -806,6 +809,63 @@
             });
         }
         
+        function drawCoordinateAxes(ctx, canvas) {
+            // Draw coordinate axes in corner
+            const axisLength = 30;
+            const margin = 40;
+            const originX = margin;
+            const originY = canvas.height - margin;
+            
+            // Draw axes
+            ctx.save();
+            ctx.lineWidth = 2;
+            ctx.font = '12px monospace';
+            
+            // X-axis (red) - points right
+            ctx.strokeStyle = '#ff4444';
+            ctx.fillStyle = '#ff4444';
+            ctx.beginPath();
+            ctx.moveTo(originX, originY);
+            ctx.lineTo(originX + axisLength, originY);
+            ctx.stroke();
+            // Arrow
+            ctx.beginPath();
+            ctx.moveTo(originX + axisLength, originY);
+            ctx.lineTo(originX + axisLength - 5, originY - 3);
+            ctx.lineTo(originX + axisLength - 5, originY + 3);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillText('X', originX + axisLength + 5, originY + 3);
+            
+            // Y-axis (green) - points up (represents MuJoCo's Z)
+            ctx.strokeStyle = '#44ff44';
+            ctx.fillStyle = '#44ff44';
+            ctx.beginPath();
+            ctx.moveTo(originX, originY);
+            ctx.lineTo(originX, originY - axisLength);
+            ctx.stroke();
+            // Arrow
+            ctx.beginPath();
+            ctx.moveTo(originX, originY - axisLength);
+            ctx.lineTo(originX - 3, originY - axisLength + 5);
+            ctx.lineTo(originX + 3, originY - axisLength + 5);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillText('Z', originX - 10, originY - axisLength - 5);
+            
+            // Origin label
+            ctx.fillStyle = '#888';
+            ctx.fillText('(0,0)', originX - 35, originY + 15);
+            
+            // Coordinate system note
+            ctx.fillStyle = '#666';
+            ctx.font = '10px monospace';
+            ctx.fillText('MuJoCo: X→, Z↑', originX + 50, originY - 10);
+            ctx.fillText('(Y into screen)', originX + 50, originY);
+            
+            ctx.restore();
+        }
+        
         function drawStickFigure(ctx, canvas, position, qpos) {
             // Center the figure on canvas
             const centerX = canvas.width / 2 + position[0] * 10;
@@ -814,55 +874,161 @@
             // Scale factor for the stick figure
             const scale = 20;
             
-            // Draw torso
-            ctx.strokeStyle = '#4a9eff';
-            ctx.lineWidth = 3;
+            // Parse joint angles from qpos
+            // Humanoid model: [x,y,z, qw,qx,qy,qz, joint_angles...]
+            // Joint order (typical): hip_z, hip_y, hip_x, knee, ankle_y, ankle_x (per leg)
+            const rootHeight = position[2]; // How high off ground
+            const isFallen = rootHeight < 0.5; // Detect if fallen
+            
+            // Joint indices (approximate for humanoid)
+            const joints = {
+                hip_right: qpos[7] || 0,
+                knee_right: qpos[8] || 0,
+                ankle_right: qpos[9] || 0,
+                hip_left: qpos[10] || 0,
+                knee_left: qpos[11] || 0,
+                ankle_left: qpos[12] || 0,
+                shoulder_right: qpos[13] || 0,
+                elbow_right: qpos[14] || 0,
+                shoulder_left: qpos[15] || 0,
+                elbow_left: qpos[16] || 0
+            };
+            
+            // Helper to get color based on joint angle/velocity
+            function getJointColor(angle, maxAngle = Math.PI/2) {
+                const stress = Math.abs(angle) / maxAngle;
+                if (stress > 0.8) return '#ff4444'; // Red - high stress
+                if (stress > 0.5) return '#ffaa44'; // Orange - medium
+                if (stress > 0.2) return '#ffff44'; // Yellow - active
+                return '#44ff44'; // Green - relaxed
+            }
+            
+            // Draw shadow if fallen
+            if (isFallen) {
+                ctx.fillStyle = 'rgba(255, 100, 100, 0.2)';
+                ctx.beginPath();
+                ctx.ellipse(centerX, centerY + 10, scale * 1.5, scale * 0.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Draw torso (changes color based on overall stability)
+            ctx.strokeStyle = isFallen ? '#ff6666' : '#4a9eff';
+            ctx.lineWidth = 4;
             ctx.beginPath();
             ctx.moveTo(centerX, centerY);
-            ctx.lineTo(centerX, centerY - scale);
+            const torsoTop = centerY - scale * (isFallen ? 0.3 : 1);
+            ctx.lineTo(centerX, torsoTop);
             ctx.stroke();
             
             // Draw head
-            ctx.fillStyle = '#4a9eff';
+            ctx.fillStyle = ctx.strokeStyle;
             ctx.beginPath();
-            ctx.arc(centerX, centerY - scale - 8, 6, 0, Math.PI * 2);
+            ctx.arc(centerX, torsoTop - 8, 6, 0, Math.PI * 2);
             ctx.fill();
             
-            // Draw legs (simplified)
-            ctx.strokeStyle = '#4a9eff';
-            ctx.lineWidth = 2;
+            // Draw RIGHT LEG with actual joint angles
+            ctx.lineWidth = 3;
             
-            // Right leg
+            // Hip to knee
+            const hipX = centerX;
+            const hipY = centerY;
+            const kneeX = hipX + Math.sin(joints.hip_right) * scale * 0.8;
+            const kneeY = hipY + Math.cos(joints.hip_right) * scale * 0.8;
+            
+            ctx.strokeStyle = getJointColor(joints.hip_right);
             ctx.beginPath();
-            ctx.moveTo(centerX, centerY);
-            ctx.lineTo(centerX + 8, centerY + scale * 0.8);
-            ctx.lineTo(centerX + 10, centerY + scale * 1.5);
+            ctx.moveTo(hipX, hipY);
+            ctx.lineTo(kneeX, kneeY);
             ctx.stroke();
             
-            // Left leg
+            // Knee to ankle
+            const ankleX = kneeX + Math.sin(joints.hip_right + joints.knee_right) * scale * 0.7;
+            const ankleY = kneeY + Math.cos(joints.hip_right + joints.knee_right) * scale * 0.7;
+            
+            ctx.strokeStyle = getJointColor(joints.knee_right);
             ctx.beginPath();
-            ctx.moveTo(centerX, centerY);
-            ctx.lineTo(centerX - 8, centerY + scale * 0.8);
-            ctx.lineTo(centerX - 10, centerY + scale * 1.5);
+            ctx.moveTo(kneeX, kneeY);
+            ctx.lineTo(ankleX, ankleY);
             ctx.stroke();
             
-            // Draw arms
+            // Draw LEFT LEG
+            const kneeXL = hipX + Math.sin(joints.hip_left) * scale * 0.8;
+            const kneeYL = hipY + Math.cos(joints.hip_left) * scale * 0.8;
+            
+            ctx.strokeStyle = getJointColor(joints.hip_left);
+            ctx.beginPath();
+            ctx.moveTo(hipX, hipY);
+            ctx.lineTo(kneeXL, kneeYL);
+            ctx.stroke();
+            
+            const ankleXL = kneeXL + Math.sin(joints.hip_left + joints.knee_left) * scale * 0.7;
+            const ankleYL = kneeYL + Math.cos(joints.hip_left + joints.knee_left) * scale * 0.7;
+            
+            ctx.strokeStyle = getJointColor(joints.knee_left);
+            ctx.beginPath();
+            ctx.moveTo(kneeXL, kneeYL);
+            ctx.lineTo(ankleXL, ankleYL);
+            ctx.stroke();
+            
+            // Draw ARMS with color coding
+            const shoulderY = torsoTop + 5;
+            
             // Right arm
+            const elbowXR = centerX + Math.cos(joints.shoulder_right) * scale * 0.5;
+            const elbowYR = shoulderY + Math.sin(joints.shoulder_right) * scale * 0.5;
+            
+            ctx.strokeStyle = getJointColor(joints.shoulder_right);
+            ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.moveTo(centerX, centerY - scale * 0.7);
-            ctx.lineTo(centerX + 12, centerY - scale * 0.5);
-            ctx.lineTo(centerX + 15, centerY - scale * 0.2);
+            ctx.moveTo(centerX, shoulderY);
+            ctx.lineTo(elbowXR, elbowYR);
+            ctx.stroke();
+            
+            const handXR = elbowXR + Math.cos(joints.shoulder_right + joints.elbow_right) * scale * 0.4;
+            const handYR = elbowYR + Math.sin(joints.shoulder_right + joints.elbow_right) * scale * 0.4;
+            
+            ctx.strokeStyle = getJointColor(joints.elbow_right);
+            ctx.beginPath();
+            ctx.moveTo(elbowXR, elbowYR);
+            ctx.lineTo(handXR, handYR);
             ctx.stroke();
             
             // Left arm
+            const elbowXL = centerX - Math.cos(joints.shoulder_left) * scale * 0.5;
+            const elbowYL = shoulderY + Math.sin(joints.shoulder_left) * scale * 0.5;
+            
+            ctx.strokeStyle = getJointColor(joints.shoulder_left);
             ctx.beginPath();
-            ctx.moveTo(centerX, centerY - scale * 0.7);
-            ctx.lineTo(centerX - 12, centerY - scale * 0.5);
-            ctx.lineTo(centerX - 15, centerY - scale * 0.2);
+            ctx.moveTo(centerX, shoulderY);
+            ctx.lineTo(elbowXL, elbowYL);
             ctx.stroke();
             
-            // Add motion indicator
-            if (Math.abs(position[0]) > 0.1) {
+            const handXL = elbowXL - Math.cos(joints.shoulder_left + joints.elbow_left) * scale * 0.4;
+            const handYL = elbowYL + Math.sin(joints.shoulder_left + joints.elbow_left) * scale * 0.4;
+            
+            ctx.strokeStyle = getJointColor(joints.elbow_left);
+            ctx.beginPath();
+            ctx.moveTo(elbowXL, elbowYL);
+            ctx.lineTo(handXL, handYL);
+            ctx.stroke();
+            
+            // Draw joint dots to show articulation points
+            ctx.fillStyle = '#ffffff';
+            const jointPositions = [
+                [kneeX, kneeY], [kneeXL, kneeYL],
+                [ankleX, ankleY], [ankleXL, ankleYL],
+                [elbowXR, elbowYR], [elbowXL, elbowYL]
+            ];
+            
+            jointPositions.forEach(([x, y]) => {
+                ctx.beginPath();
+                ctx.arc(x, y, 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            // Motion trail for high movement
+            const velocity = Math.sqrt(position[0]**2 + position[1]**2);
+            if (velocity > 0.1) {
                 ctx.strokeStyle = 'rgba(74, 158, 255, 0.3)';
                 ctx.lineWidth = 1;
                 ctx.setLineDash([5, 5]);

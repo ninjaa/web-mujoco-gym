@@ -182,4 +182,79 @@ export function toMujocoPos(target, source) {
 - **Three.js**: Y-up coordinate system
 - **Swizzle transformation**: (x,y,z) → (x,z,-y)
 
+#### MuJoCo World Coordinates:
+- **Origin (0,0,0)**: Located at ground level in the center of the world
+- **+X axis**: Points to the right (when viewed from above)
+- **+Y axis**: Points forward/north (into the screen in top-down view)
+- **+Z axis**: Points up (against gravity)
+- **Gravity**: Acts in -Z direction (pulling objects down)
+
+#### Our 2D Stick Figure Visualization:
+Since we're rendering a top-down view in our canvas:
+- **Screen X**: Maps to MuJoCo X (left/right)
+- **Screen Y**: Maps to MuJoCo Z (up/down in 3D becomes up/down in 2D)
+- **MuJoCo Y**: Not visible (depth/forward direction)
+
+```javascript
+// Our 2D mapping from getObservation():
+// We use bodyPos[0] for X (left/right)
+// We use bodyPos[2] for Y (MuJoCo's Z - height)
+// We ignore bodyPos[1] (MuJoCo's Y - forward/back)
+```
+
+#### Why Robots Fall:
+In the Three.js demo, the humanoid appears "crumpled on the floor" because:
+1. Gravity constantly pulls in -Z direction
+2. Without actuator forces, joints collapse
+3. The physics is realistic - robots need active control to stand!
+
+This is why you can "puppet" the robot with mouse drags - you're applying external forces that counteract gravity.
+
+### Physics and Gravity
+
+#### MuJoCo Handles ALL Physics
+A critical distinction to understand:
+- **MuJoCo**: Full physics engine that calculates forces, gravity, collisions, joint dynamics
+- **Three.js**: Pure visualization/rendering library with NO physics
+
+#### Gravity in MuJoCo
+- **Default gravity**: `[0, 0, -9.81]` m/s² (Earth gravity in -Z direction)
+- Applied automatically unless overridden in XML with `<option gravity="0 0 -9.81"/>`
+- This is why robots fall and crumple without actuator control
+
+#### The Physics Pipeline
+```
+1. MuJoCo Physics Engine
+   ↓
+2. simulation.step() applies:
+   - Gravity forces (-9.81 m/s² in -Z)
+   - Joint torques from actuators
+   - Contact forces from collisions
+   - Integration of velocities → positions
+   ↓
+3. Updates simulation arrays:
+   - xpos[] - body positions
+   - xquat[] - body orientations
+   - qpos[] - joint positions
+   ↓
+4. Three.js reads arrays and renders
+```
+
+#### Key Code: Where Physics Happens
+```javascript
+// In our worker:
+simulation.ctrl[i] = actions[i];  // Set actuator commands
+simulation.step();                // ALL physics happens here!
+// After this, xpos/xquat/qpos are updated with new physics state
+```
+
+The `simulation.step()` call is where MuJoCo:
+- Applies gravity to all bodies
+- Computes joint forces from actuators
+- Detects and resolves collisions
+- Integrates the equations of motion
+- Updates all position/orientation arrays
+
+Three.js simply reads these updated arrays to visualize the result. It has no influence on the physics - it's a one-way data flow from MuJoCo to Three.js.
+
 This validates that our direct array indexing approach is the standard way to work with MuJoCo WASM!
