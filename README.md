@@ -31,9 +31,9 @@ Current RL research requires either:
 │  │ Orchestrator │  │ Visualization │    │
 │  └─────────────┘  └──────────────┘    │
 └─────────────┬───────────────────────────┘
-              │
-    ┌─────────┴─────────┬─────────────┐
-    ▼                   ▼             ▼
+               │
+     ┌─────────┴─────────┬─────────────┐
+     ▼                   ▼             ▼
 ┌─────────┐      ┌─────────┐    ┌─────────┐
 │Worker 1 │      │Worker 2 │    │Worker N │
 │┌───────┐│      │┌───────┐│    │┌───────┐│
@@ -43,6 +43,14 @@ Current RL research requires either:
 └─────────┘      └─────────┘    └─────────┘
 ```
 
+### Modular Design (v2)
+The latest refactor splits functionality into focused modules:
+- `mujoco-orchestrator.js` - Manages worker pool and environment distribution
+- `mujoco-rl-worker-v2.js` - Runs MuJoCo physics in Web Workers
+- `ui-controls.js` - UI state management and render loop
+- `visualization-2d.js` - 2D stick figure rendering
+- `threejs-modal.js` - 3D visualization popup (click any environment)
+
 ## 📊 Current Status
 
 ### ✅ Working
@@ -50,6 +58,8 @@ Current RL research requires either:
 - Multi-environment orchestration with Web Workers
 - Real-time visualization dashboard
 - Basic physics simulation (pendulum demo)
+- RL policy integration
+- Environment randomization
 
 ### 🚧 In Progress
 - Integration of complex robot models (humanoid, ant, cheetah)
@@ -100,8 +110,7 @@ docker-compose up --build -d
 docker logs -f mujoco-wasm-container
 
 # Access the demos
-http://localhost:8080/workspace/multi-env-demo.html    # Mock physics demo
-http://localhost:8080/workspace/mujoco-simple-test.html # Real MuJoCo test
+http://localhost:8080/workspace/multi-env-demo.html    # Main parallel RL demo
 ```
 
 ## 🎯 Hackathon Goals
@@ -157,7 +166,7 @@ We're looking for help with:
 
 - Hackathon Team: [aditya@bestparents.com]
 - Project Leads: Aditya, Richa
-- GitHub: [ninjaa]
+- GitHub: [ninjaa] [richafltr]
 
 ---
 
