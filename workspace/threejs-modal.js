@@ -668,7 +668,7 @@ function animate(state) {
       // Calculate force vector
       const force = dragStateManager.currentWorld.clone()
         .sub(dragStateManager.worldHit)
-        .multiplyScalar(250); // Adjust force magnitude
+        .multiplyScalar(15); // Balanced force for responsive dragging
       
       // Convert to MuJoCo coordinates
       const mjForce = threeToMujocoPosition(force);
