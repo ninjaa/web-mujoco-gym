@@ -7,10 +7,16 @@ let state = null;
 let simulation = null;
 let envConfig = null;
 let envState = null;
+let modelConfig = null;
 
 // Initialize MuJoCo when worker starts
 self.onmessage = async function(e) {
     const { type, data } = e.data;
+    
+    if (type === 'error' && data && data.envId !== undefined) {
+        console.error('Worker received error:', data);
+        return;
+    }
     
     try {
         switch (type) {
@@ -67,16 +73,21 @@ async function initializeMuJoCo(config) {
         mujoco.FS.mkdir('/working');
         mujoco.FS.mount(mujoco.MEMFS, { root: '.' }, '/working');
         
-        // For now, use humanoid for all types while we debug
+        const envType = config.envType || 'humanoid';
+        
+        // Get model XML - use the real humanoid.xml for humanoid
         let modelXML;
-        if (config.envType === 'humanoid' || true) {  // Force humanoid for testing
-            // Fetch the working humanoid model
+        if (envType === 'humanoid') {
             const response = await fetch('/workspace/humanoid.xml');
             modelXML = await response.text();
         } else {
-            // Use simple models for other types
-            modelXML = createModelXML(config.envType);
+            // Use simple inline models for other types
+            const modelData = getSimpleModel(envType);
+            modelXML = modelData.xml;
         }
+        
+        // Store model config for name mappings
+        modelConfig = getModelConfig(envType);
         
         // Write model to filesystem
         const modelPath = '/working/model.xml';
@@ -117,7 +128,27 @@ async function initializeMuJoCo(config) {
     }
 }
 
-function createModelXML(envType) {
+// Model configurations for name-to-index mappings
+function getModelConfig(envType) {
+    const configs = {
+        'humanoid': {
+            bodies: {
+                torso: 1,  // torso is the first body after world in humanoid.xml
+                // We can add more mappings as needed without changing the XML
+            }
+        },
+        'pendulum': {
+            bodies: {
+                pole: 1
+            }
+        }
+    };
+    
+    return configs[envType] || configs['humanoid'];
+}
+
+// Simple models for non-humanoid types
+function getSimpleModel(envType) {
     // Start with very simple models to avoid memory issues
     const models = {
         'pendulum': `
@@ -163,21 +194,6 @@ function createModelXML(envType) {
     </actuator>
 </mujoco>`,
 
-        'humanoid': `
-<mujoco>
-    <option timestep="0.02"/>
-    <worldbody>
-        <light diffuse="1 1 1" pos="0 0 3" dir="0 0 -1"/>
-        <geom name="floor" type="plane" size="10 10 0.1" rgba="0.8 0.8 0.8 1"/>
-        
-        <!-- Very simple humanoid -->
-        <body name="torso" pos="0 0 1">
-            <joint name="root" type="free"/>
-            <geom name="torso_geom" type="box" size="0.1 0.05 0.2" rgba="0.3 0.3 0.8 1" mass="5"/>
-        </body>
-    </worldbody>
-</mujoco>`,
-
         'cheetah': `
 <mujoco>
     <option timestep="0.02"/>
@@ -191,10 +207,28 @@ function createModelXML(envType) {
             <geom name="torso_geom" type="box" size="0.3 0.1 0.05" rgba="0.8 0.6 0.2 1" mass="5"/>
         </body>
     </worldbody>
+</mujoco>`,
+
+        'humanoid': `
+<mujoco>
+    <option timestep="0.02"/>
+    <worldbody>
+        <light diffuse="1 1 1" pos="0 0 3" dir="0 0 -1"/>
+        <geom name="floor" type="plane" size="10 10 0.1" rgba="0.8 0.8 0.8 1"/>
+        
+        <!-- Very simple humanoid -->
+        <body name="torso" pos="0 0 1">
+            <joint name="root" type="free"/>
+            <geom name="torso_geom" type="box" size="0.1 0.05 0.2" rgba="0.3 0.3 0.8 1" mass="5"/>
+        </body>
+    </worldbody>
 </mujoco>`
     };
     
-    return models[envType] || models['pendulum'];
+    const config = models[envType] || models['pendulum'];
+    return {
+        xml: config
+    };
 }
 
 function stepSimulation(data) {
@@ -271,14 +305,12 @@ function stepSimulation(data) {
 function getObservation() {
     if (!simulation || !model) return null;
     
-    // For humanoid, we want the torso position which is typically body index 1 (after world body)
-    // In MuJoCo, body 0 is usually the world body
-    let bodyIndex = 1; // torso is usually the second body
+    // Use model config to get the right body, fallback to index 1 if not specified
+    const trackedBodyName = 'torso';  // Could make this configurable
+    const bodyIndex = (modelConfig && modelConfig.bodies && modelConfig.bodies[trackedBodyName]) || 1;
     
     let bodyPos = [0, 0, 0];
     try {
-        // In MuJoCo WASM, we access body positions directly from simulation.xpos array
-        // Each body has 3 values (x, y, z) in the xpos array
         if (bodyIndex < model.nbody) {
             const xposOffset = bodyIndex * 3;
             bodyPos = [
