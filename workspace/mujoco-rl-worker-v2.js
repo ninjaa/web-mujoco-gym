@@ -57,6 +57,14 @@ self.onmessage = async function(e) {
                 }
                 break;
                 
+            case 'getTextureData':
+                if (model) {
+                    getTextureData(data, id);
+                } else {
+                    throw new Error('Model not initialized');
+                }
+                break;
+                
             default:
                 throw new Error(`Unknown message type: ${type}`);
         }
@@ -533,5 +541,46 @@ function applyForce(data, id) {
             force: force,
             active: dragState !== null
         }
+    });
+}
+
+function getTextureData(data, id) {
+    if (!model) return;
+    
+    console.log('Getting texture data from model...');
+    
+    const textureData = {};
+    
+    // Check if texture data exists
+    if (model.tex_rgb) {
+        // Get all textures
+        const numTextures = model.ntex || 0;
+        console.log(`Found ${numTextures} textures`);
+        
+        for (let texId = 0; texId < numTextures; texId++) {
+            const width = model.tex_width[texId];
+            const height = model.tex_height[texId];
+            const offset = model.tex_adr[texId];
+            
+            console.log(`Texture ${texId}: ${width}x${height} at offset ${offset}`);
+            
+            // Extract RGB data
+            const rgbData = new Uint8Array(width * height * 3);
+            for (let i = 0; i < width * height * 3; i++) {
+                rgbData[i] = model.tex_rgb[offset + i];
+            }
+            
+            textureData[texId] = {
+                width: width,
+                height: height,
+                data: rgbData
+            };
+        }
+    }
+    
+    self.postMessage({
+        type: 'textureData',
+        id: id,
+        data: textureData
     });
 }

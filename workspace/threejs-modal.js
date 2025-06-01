@@ -344,13 +344,48 @@ function createRobot() {
 
     // Create material from model data
     const mjBodyMaterial = modelData.materials.body || null;
-    const bodyMaterial = mjBodyMaterial
-      ? createThreeMaterial(mjBodyMaterial)
-      : new THREE.MeshPhysicalMaterial({
-          color: new THREE.Color(0.8, 0.6, 0.4), // Default skin tone
-          roughness: 0.6,
-          metalness: 0.1,
-        });
+    
+    // Create cross-hatch texture for body material
+    const textureCanvas = document.createElement('canvas');
+    textureCanvas.width = 128;
+    textureCanvas.height = 128;
+    const textureCtx = textureCanvas.getContext('2d');
+    
+    // Fill with base skin color
+    textureCtx.fillStyle = 'rgb(204, 153, 102)'; // 0.8, 0.6, 0.4 in RGB
+    textureCtx.fillRect(0, 0, 128, 128);
+    
+    // Draw cross-hatch pattern
+    textureCtx.strokeStyle = 'rgba(255, 255, 255, 0.3)'; // White marks with transparency
+    textureCtx.lineWidth = 1;
+    
+    // Draw diagonal lines in one direction
+    for (let i = -128; i < 256; i += 8) {
+      textureCtx.beginPath();
+      textureCtx.moveTo(i, 0);
+      textureCtx.lineTo(i + 128, 128);
+      textureCtx.stroke();
+    }
+    
+    // Draw diagonal lines in the other direction
+    for (let i = -128; i < 256; i += 8) {
+      textureCtx.beginPath();
+      textureCtx.moveTo(i + 128, 0);
+      textureCtx.lineTo(i, 128);
+      textureCtx.stroke();
+    }
+    
+    const bodyTexture = new THREE.CanvasTexture(textureCanvas);
+    bodyTexture.wrapS = THREE.RepeatWrapping;
+    bodyTexture.wrapT = THREE.RepeatWrapping;
+    
+    const bodyMaterial = new THREE.MeshPhysicalMaterial({
+      map: bodyTexture,
+      roughness: 0.6,
+      metalness: 0.1,
+      clearcoat: 0.1,
+      clearcoatRoughness: 0.8
+    });
 
     // Create groups for each body
     modelData.bodies.forEach((body) => {
