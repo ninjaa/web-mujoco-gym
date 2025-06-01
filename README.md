@@ -167,6 +167,39 @@ The central concept is an agent that learns *how to learn better*. Instead of pa
 
 This creates a powerful feedback loop where the system can reroute its training efforts towards more promising configurations or explore diverse behaviors by dynamically shaping its own curriculum and objectives.
 
+#### MuJoCo RL Policy Learning Architecture & Convergence
+
+```mermaid
+graph LR
+    subgraph MUJOCO_ENV [MuJoCo Environment]
+        direction TB
+        ME_Physics["Physics Engine (MuJoCo)"]
+        ME_Task["Task (e.g., Walk)"]
+        ME_RewardFunc["Reward Function"]
+        ME_Observation["State/Observation (joint pos, vel, etc.)"]
+    end
+
+    subgraph RL_AGENT [RL Agent (Actor-Critic)]
+        direction TB
+        RL_Actor["Actor Network π(a|s)<br>Policy Parameters θ<br>Action Distribution"]
+        RL_Critic["Critic Network V(s)<br>Value Parameters Φ<br>State Value"]
+        RL_Algo["Algorithm Options<br>PPO, SAC, A3C/A2C, DDPG, TD3, etc."]
+        RL_Buffer["Experience Buffer/Replay<br>(s, a, r, s', done) tuples"]
+    end
+
+    subgraph TRAINING_CONVERGENCE [Training & Convergence]
+        direction TB
+        TC_Update["Policy Gradient Update<br>θ ← θ + α∇<sub>θ</sub>J(θ)<br>Φ ← Φ + β∇<sub>Φ</sub>L(Φ)"]
+        TC_Loss["Loss Functions<br>Policy Loss: -log π(a|s) * A(s,a)<br>Value Loss: (V(s) - R)<sup>2</sup><br>Entropy Loss (exploration)"]
+        TC_Metrics["Convergence Metrics<br>- Average Episode Return<br>- Policy Loss Reduction<br>- Value Function Accuracy<br>- KL Divergence (PPO)"]
+    end
+
+    MUJOCO_ENV -- "State s_t" --> RL_AGENT
+    RL_AGENT -- "Action a_t" --> MUJOCO_ENV
+    MUJOCO_ENV -- "Reward r_t" --> RL_AGENT
+    RL_AGENT -- "Gradients" --> TRAINING_CONVERGENCE
+```
+
 ### System Layers
 
 The architecture is composed of four main layers:
