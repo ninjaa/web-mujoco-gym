@@ -19,6 +19,16 @@ This provides a transparent and engaging way to compare the "reasoning" and "cre
 
 ## 🚀 Quick Start (Towards the Vision)
 
+### Docker Setup (For MuJoCo WASM build environment)
+
+```bash
+# Build and run
+docker-compose up --build -d
+
+# Access container (if necessary)
+docker exec -it mujoco-wasm-container bash
+```
+
 ### 1. Start the Unified LLM Proxy (Required for LLM Features)
 *(This is the server-side component you'll be developing/refining to handle requests to Claude, OpenAI, and Gemini)*
 ```bash
@@ -87,7 +97,7 @@ This project is on an ambitious trajectory. Here’s how we get to the main even
     *   Develop the initial server-side unified `llm-proxy` to handle requests to at least one LLM provider (e.g., Claude) and manage API keys securely.
 
 *   **➡️ Phase 1: `meta-rl-demo.html` - Single Selectable LLM (In Progress)**
-    *   Create a UI in `meta-rl-demo.html` allowing users to select one LLM provider (Claude, OpenAI, Gemini) from a dropdown.
+    *   Create a UI in `meta-rl-demo.html` allowing users to select one LLM provider (Claude, OpenAI, Gemini, Deepseek) from a dropdown.
     *   The selected LLM generates reward functions for the existing 4-policy meta-RL setup.
     *   Client-side JavaScript calls the `llm-proxy` with the selected provider.
 
@@ -159,19 +169,6 @@ Claude API        OpenAI API        Gemini API
 - **Physics Rate**: 1000+ steps/second per environment.
 - **Rendering**: 60-120 FPS with multiple environments.
 
-## 🛠️ Development
-
-### Docker Setup (For MuJoCo WASM build environment if needed)
-```bash
-# Build and run
-docker-compose up --build -d
-
-# Access container
-docker exec -it mujoco-wasm-container bash
-
-# Rebuild WASM
-docker exec -it mujoco-wasm-container build
-```
 
 ### Project Structure (Target)
 ```
