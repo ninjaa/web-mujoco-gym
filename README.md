@@ -41,15 +41,15 @@ Edit `workspace/llm-config.js` (you'll create/rename this) and add your API keys
 window.LLM_CONFIG = {
     claude: {
         apiKey: 'YOUR_ANTHROPIC_API_KEY_HERE',
-        model: 'claude-3-opus-20240229', // Or your preferred model
+        model: 'claude-opus-4-20250512', // Or your preferred model
     },
     openai: {
         apiKey: 'YOUR_OPENAI_API_KEY_HERE',
-        model: 'gpt-4-turbo-preview',
+        model: 'gpt-4.1',
     },
     gemini: {
         apiKey: 'YOUR_GOOGLE_GEMINI_API_KEY_HERE',
-        model: 'gemini-pro', 
+        model: 'gemini-2.5-pro', 
     },
     // Shared settings
     maxTokens: 2000 
