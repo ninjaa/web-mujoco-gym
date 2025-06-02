@@ -41,7 +41,7 @@ Edit `workspace/llm-config.js` (you'll create/rename this) and add your API keys
 window.LLM_CONFIG = {
     claude: {
         apiKey: 'YOUR_ANTHROPIC_API_KEY_HERE',
-        model: 'claude-opus-4-20250512', // Or your preferred model
+        model: 'claude-opus-4-20250514',
     },
     openai: {
         apiKey: 'YOUR_OPENAI_API_KEY_HERE',
