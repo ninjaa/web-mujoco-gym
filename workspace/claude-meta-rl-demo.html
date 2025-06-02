@@ -160,6 +160,12 @@
     <div class="header">
         <h1>🤖 TabRL: AI Training AI in your Browser Tab</h1>
         <p>LLM-guided reinforcement learning with iterative meta-learning - all in your browser!</p>
+        <div style="margin-top: 20px;">
+            <label style="color: #74b3ff;">Task: 
+                <input id="taskInput" type="text" value="make a MuJoCo humanoid.xml robot learn to stand upright without falling" 
+                    style="width: 600px; background: rgba(0,0,0,0.3); color: #f0f0f0; border: 1px solid #4a9eff; padding: 8px; border-radius: 5px;">
+            </label>
+        </div>
     </div>
 
     <div class="iteration-counter">
@@ -176,11 +182,18 @@
         <button id="exportWinner" onclick="exportWinningPolicy()" disabled>
             💾 Export Winner
         </button>
+        <button id="playWinner" onclick="playWinnerInFactory()" disabled>
+            🏭 Play Winner
+        </button>
+        <button onclick="showMetaPrompt()">
+            📝 Show Prompt
+        </button>
         <label style="margin-left: 20px; color: #74b3ff;">
             Generations/iteration:
             <select id="episodesPerIteration" style="background: rgba(0,0,0,0.3); color: #74b3ff; border: 1px solid #4a9eff; padding: 5px; border-radius: 5px;">
                 <option value="5">5 (Quick demo)</option>
-                <option value="10" selected>10 (Fast)</option>
+                <option value="10">10 (Fast)</option>
+                <option value="25" selected>25 (Better for standing)</option>
                 <option value="20">20 (Better)</option>
                 <option value="30">30 (Good)</option>
                 <option value="50">50 (Best)</option>
@@ -233,7 +246,8 @@ Ready to begin! 🎯
             isTraining: false,
             performanceChart: null,
             policyConfigs: [],
-            colors: ["#ff6b6b", "#4a9eff", "#22c55e", "#fbbf24"]
+            colors: ["#ff6b6b", "#4a9eff", "#22c55e", "#fbbf24"],
+            iterationHistory: [] // Store all iterations for Claude to learn from
         };
 
         // Initialize on load
@@ -276,6 +290,10 @@ Ready to begin! 🎯
                         <span class="stat">Best: <span id="reward-${idx}" class="stat-value">0</span></span>
                         <span class="stat">Generation: <span id="episodes-${idx}" class="stat-value">0</span></span>
                     </div>
+                    <div style="margin-top: 10px; text-align: center;">
+                        <button onclick="exportPolicy(${idx})" style="font-size: 12px; padding: 5px 10px;">Export</button>
+                        <button onclick="viewRewardFunction(${idx})" style="font-size: 12px; padding: 5px 10px;">View Reward</button>
+                    </div>
                 `;
                 grid.appendChild(box);
             });
@@ -283,11 +301,20 @@ Ready to begin! 🎯
 
         function initializePerformanceChart() {
             const ctx = document.getElementById('performanceChart').getContext('2d');
+            
+            // Create datasets based on current configs (or defaults)
+            const configs = window.metaState.policyConfigs.length > 0 ? 
+                window.metaState.policyConfigs : 
+                Array(4).fill(null).map((_, i) => ({
+                    name: `Policy ${i+1}`,
+                    color: window.metaState.colors[i]
+                }));
+            
             window.metaState.performanceChart = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: [],
-                    datasets: window.metaState.policyConfigs.map(config => ({
+                    datasets: configs.map(config => ({
                         label: config.name,
                         data: [],
                         borderColor: config.color,
@@ -320,6 +347,9 @@ Ready to begin! 🎯
         async function startMetaTraining() {
             console.log('Starting meta-training...');
             
+            // Get the task from input
+            window.metaState.task = document.getElementById('taskInput').value;
+            
             document.getElementById('startMetaTraining').disabled = true;
             document.getElementById('stopTraining').disabled = false;
             window.metaState.isTraining = true;
@@ -344,12 +374,16 @@ Ready to begin! 🎯
             document.getElementById('startMetaTraining').disabled = false;
             document.getElementById('stopTraining').disabled = true;
             document.getElementById('exportWinner').disabled = false;
+            document.getElementById('playWinner').disabled = false;
         }
 
         async function generateClaudeExperiment() {
             const analysisDiv = document.getElementById('analysisText');
             
-            const megaPrompt = `You are designing a meta-learning experiment for training humanoid robots. Generate 4 diverse training approaches.
+            // Get task from user or use default
+            const task = window.metaState.task || "make a MuJoCo humanoid.xml robot learn to stand upright without falling";
+            
+            const megaPrompt = `You are designing a meta-learning experiment for: "${task}". Generate 4 diverse training approaches.
 
 <requirements>
 For each approach, provide:
@@ -360,37 +394,84 @@ For each approach, provide:
 </requirements>
 
 <output_format>
-Output EXACTLY in this JSON format (no markdown, no code blocks):
-{
-  "approaches": [
-    {
-      "name": "Creative Name Here",
-      "focus": "what this approach optimizes for",
-      "learningRate": 0.02,
-      "rewardFunction": "function(state, action) { const bodyPos = state.bodyPos || [0,0,0]; const bodyVel = state.bodyVel || [0,0,0]; let reward = 0; /* your creative reward logic here */ return reward; }"
-    }
-  ]
+Output your 4 approaches using these XML tags:
+
+<approach>
+<name>Creative Name Here</name>
+<focus>what this approach optimizes for</focus>
+<learning_rate>0.02</learning_rate>
+<reward_function>
+function(state, action) {
+  // Get robot state (with defaults to prevent NaN)
+  const bodyPos = state.bodyPos || [0,0,0]; // [x,y,z] position
+  const bodyVel = state.bodyVel || [0,0,0]; // [vx,vy,vz] velocity
+  const qpos = state.qpos || new Array(28).fill(0);
+  let reward = 0;
+  
+  // ADD DETAILED COMMENTS explaining each reward component
+  // Your reward logic here
+  
+  return reward;
 }
+</reward_function>
+</approach>
+
+Generate exactly 4 <approach> blocks.
 </output_format>
 
+<state_schema>
+The state object contains ONLY these properties:
+- state.bodyPos: [x, y, z] - torso position in world coordinates
+- state.bodyVel: [vx, vy, vz] - torso velocity (MAY BE UNDEFINED - use || [0,0,0])
+- state.qpos: array (length 28) where:
+  - qpos[0:3] = root position [x,y,z]
+  - qpos[3:7] = root quaternion [w,x,y,z]
+  - qpos[7:28] = 21 joint angles for: pelvis, hip, knee, ankle, shoulder, elbow
+- state.qvel: array of velocities (MAY BE UNDEFINED - use || defaults)
+- state.cfrc_ext: contact forces (MAY BE UNDEFINED)
+
+The action array has 21 elements (joint torques from -1 to 1) controlling:
+[0-2]: pelvis (tilt, list, rotation)
+[3-5]: right hip (flexion, abduction, rotation)
+[6]: right knee
+[7-8]: right ankle (flexion, rotation)
+[9-11]: left hip (flexion, abduction, rotation)
+[12]: left knee
+[13-14]: left ankle (flexion, rotation)
+[15-17]: right shoulder (flexion, abduction, rotation)
+[18]: right elbow
+[19-20]: left shoulder (flexion, abduction)
+
+DO NOT use properties that don't exist like:
+- state.time (doesn't exist)
+- state.bodyAngVel (doesn't exist)
+- state.footContacts (doesn't exist)
+</state_schema>
+
 <ideas>
-Be creative! Consider approaches like:
-- Maximizing forward speed
-- Perfect balance and stability  
-- Energy efficiency
-- Graceful movement
-- Jumping/acrobatics
-- Dance-like motions
-- Exploration behaviors
-- Human-like walking
+For standing upright, consider approaches like:
+- Maximizing torso height (bodyPos[2])
+- Minimizing torso velocity/wobble
+- Penalizing large joint movements
+- Rewarding stable center of mass
+- Encouraging symmetric poses
+- Maintaining vertical orientation (quaternion)
+- Energy-efficient static balance
+- Progressive height targets
 </ideas>
 
 <constraints>
 - Make each reward function unique and interesting
 - Include appropriate penalties for falling (bodyPos[2] < 0.3)
 - Ensure functions are syntactically valid JavaScript
+- Add detailed comments explaining each reward component
+- Always use || defaults for state properties to prevent undefined/NaN
+- Make the logic clear so humans can understand the strategy
 </constraints>`;
 
+            // Store the prompt for display
+            window.metaState.lastUsedPrompt = megaPrompt;
+            
             try {
                 const response = await fetch('http://localhost:3001/claude', {
                     method: 'POST',
@@ -414,31 +495,70 @@ Be creative! Consider approaches like:
                 }
 
                 const data = await response.json();
-                let responseText = data.content[0].text;
+                const responseText = data.content[0].text;
                 
-                // Strip markdown code blocks if present
-                responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+                // Parse XML-style response
+                const approaches = [];
+                const approachMatches = responseText.matchAll(/<approach>([\s\S]*?)<\/approach>/g);
                 
-                // Parse the JSON response
-                const experiment = JSON.parse(responseText);
+                for (const match of approachMatches) {
+                    const approachXml = match[1];
+                    
+                    // Extract fields
+                    const name = approachXml.match(/<name>(.*?)<\/name>/)?.[1] || 'Unknown';
+                    const focus = approachXml.match(/<focus>(.*?)<\/focus>/)?.[1] || 'Unknown';
+                    const learningRate = parseFloat(approachXml.match(/<learning_rate>(.*?)<\/learning_rate>/)?.[1] || '0.01');
+                    const rewardFunction = approachXml.match(/<reward_function>([\s\S]*?)<\/reward_function>/)?.[1] || '';
+                    
+                    approaches.push({
+                        name: name.trim(),
+                        focus: focus.trim(),
+                        learningRate: learningRate,
+                        rewardFunction: rewardFunction.trim()
+                    });
+                }
                 
                 // Set up policy configs
-                window.metaState.policyConfigs = experiment.approaches.map((approach, i) => ({
-                    name: approach.name,
-                    color: window.metaState.colors[i],
-                    rewardFocus: approach.focus,
-                    learningRate: approach.learningRate,
-                    rewardFunction: new Function('return ' + approach.rewardFunction)()
-                }));
+                window.metaState.policyConfigs = approaches.map((approach, i) => {
+                    // Create a wrapper function that ensures no NaN rewards
+                    const rawFunction = new Function('return ' + approach.rewardFunction)();
+                    const safeRewardFunction = (state, action) => {
+                        try {
+                            const reward = rawFunction(state, action);
+                            if (isNaN(reward) || !isFinite(reward)) {
+                                console.warn('Invalid reward from', approach.name, '- returning 0');
+                                return 0;
+                            }
+                            return reward;
+                        } catch (error) {
+                            console.error('Reward function error in', approach.name, error);
+                            return 0;
+                        }
+                    };
+                    
+                    return {
+                        name: approach.name,
+                        color: window.metaState.colors[i],
+                        rewardFocus: approach.focus,
+                        learningRate: approach.learningRate,
+                        rewardFunction: safeRewardFunction,
+                        rewardCode: approach.rewardFunction // Store original for display
+                    };
+                });
                 
                 analysisDiv.textContent += '\n\n✨ Claude designed these approaches:';
-                window.metaState.policyConfigs.forEach(config => {
+                window.metaState.policyConfigs.forEach((config, i) => {
                     analysisDiv.textContent += `\n• ${config.name}: ${config.rewardFocus} (LR: ${config.learningRate})`;
+                });
+                
+                // Show the actual reward functions
+                analysisDiv.textContent += '\n\n📝 Reward Functions Generated:';
+                window.metaState.policyConfigs.forEach((config, i) => {
+                    analysisDiv.textContent += `\n\n${config.name}:\n${config.rewardCode.substring(0, 200)}...`;
                 });
                 
             } catch (error) {
                 console.error('Failed to generate experiment:', error);
-                console.error('Response was:', responseText);
                 analysisDiv.textContent += '\n\n⚠️ Failed to parse Claude\'s response, using defaults...';
                 
                 // Fallback configs
@@ -478,6 +598,18 @@ Be creative! Consider approaches like:
                 }
                 // Reinitialize grid with new configs
                 initializePolicyGrid();
+                
+                // Update chart with new policy names
+                if (window.metaState.performanceChart) {
+                    window.metaState.performanceChart.data.datasets = window.metaState.policyConfigs.map(config => ({
+                        label: config.name,
+                        data: [],
+                        borderColor: config.color,
+                        backgroundColor: config.color + '20',
+                        tension: 0.4
+                    }));
+                    window.metaState.performanceChart.update();
+                }
             }
 
             // Create policies and orchestrators
@@ -539,6 +671,21 @@ Be creative! Consider approaches like:
             
             analysisDiv.textContent += `\n\n🏆 Iteration ${iteration + 1} Results:
 ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).join('\n')}`;
+
+            // Save iteration results for next iteration
+            window.metaState.iterationHistory.push({
+                iteration: iteration,
+                configs: window.metaState.policyConfigs.map(c => ({
+                    name: c.name,
+                    focus: c.rewardFocus,
+                    learningRate: c.learningRate,
+                    rewardCode: c.rewardCode
+                })),
+                results: performances.map(p => ({
+                    name: p.name,
+                    avgReward: p.avgReward
+                }))
+            });
         }
 
         async function generateClaudeGuidedRewardFunctions(iteration) {
@@ -815,9 +962,15 @@ ${performances.map((p, i) => `${i+1}. ${p.name}: ${p.avgReward.toFixed(2)}`).joi
         }
         
         async function getClaudeAnalysis(performances, iteration) {
+            // Include history of previous iterations
+            const historyContext = window.metaState.iterationHistory.length > 0 ? 
+                `\nPrevious Iterations:\n${window.metaState.iterationHistory.map(h => 
+                    `Iteration ${h.iteration + 1}: ${h.results.map(r => `${r.name}: ${r.avgReward.toFixed(1)}`).join(', ')}`
+                ).join('\n')}\n` : '';
+            
             const prompt = `You are analyzing reinforcement learning training results for humanoid robots. 
-
-Iteration ${iteration + 1} Results:
+${historyContext}
+Current Iteration ${iteration + 1} Results:
 ${performances.map((p, i) => `
 Policy "${p.config.name}":
 - Focus: ${p.config.rewardFocus}
@@ -1031,6 +1184,107 @@ Key Insights:
             a.click();
             
             alert(`Exported "${winner.config.name}" policy with avg reward: ${winner.avgReward.toFixed(2)}\n\nSaved to localStorage and downloaded as file.`);
+        }
+        
+        function showMetaPrompt() {
+            // Get the actual prompt from generateClaudeExperiment
+            const megaPrompt = document.querySelector('.megaPrompt')?.textContent || 
+                window.metaState.lastUsedPrompt || 
+                'Click "Show Prompt" after starting training to see the actual prompt';
+            
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                background: rgba(0,0,0,0.95); padding: 30px; border-radius: 12px;
+                border: 1px solid #4a9eff; max-width: 80%; max-height: 80%;
+                overflow-y: auto; z-index: 1000;
+            `;
+            modal.innerHTML = `
+                <h3 style="color: #4a9eff; margin-top: 0;">Meta-Learning Prompt</h3>
+                <pre style="white-space: pre-wrap; font-size: 12px; color: #f0f0f0;">${megaPrompt}</pre>
+                <button onclick="this.parentElement.remove()" style="margin-top: 20px;">Close</button>
+            `;
+            document.body.appendChild(modal);
+        }
+        
+        async function playWinnerInFactory() {
+            // Find best performing policy
+            const performances = window.metaState.policies.map((p, i) => ({
+                index: i,
+                policy: p,
+                avgReward: p.bestReward || -Infinity
+            }));
+            
+            performances.sort((a, b) => b.avgReward - a.avgReward);
+            const winner = performances[0];
+            
+            // Export to localStorage
+            const exportData = {
+                policyName: window.metaState.policyConfigs[winner.index].name,
+                avgReward: winner.avgReward,
+                policy: winner.policy.deployPolicy()
+            };
+            localStorage.setItem('winningPolicy', JSON.stringify(exportData));
+            
+            // Open multi-env demo in new tab
+            window.open('/workspace/multi-env-demo.html?autoplay=true', '_blank');
+        }
+        
+        function exportPolicy(index) {
+            const policy = window.metaState.policies[index];
+            const config = window.metaState.policyConfigs[index];
+            
+            if (!policy) {
+                alert('No policy to export yet!');
+                return;
+            }
+            
+            const exportData = {
+                policyName: config.name,
+                avgReward: policy.bestReward || 0,
+                generation: policy.generation || 0,
+                config: config,
+                network: policy.deployPolicy(),
+                timestamp: new Date().toISOString()
+            };
+            
+            // Save to localStorage
+            localStorage.setItem(`policy_${index}`, JSON.stringify(exportData));
+            
+            // Download as file
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `policy-${config.name}-gen${policy.generation || 0}.json`;
+            a.click();
+            
+            alert(`Exported "${config.name}" (Generation ${policy.generation || 0}, Reward: ${(policy.bestReward || 0).toFixed(2)})`);
+        }
+        
+        function viewRewardFunction(index) {
+            const config = window.metaState.policyConfigs[index];
+            
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                background: rgba(0,0,0,0.95); padding: 30px; border-radius: 12px;
+                border: 1px solid ${config.color}; max-width: 80%; max-height: 80%;
+                overflow-y: auto; z-index: 1000;
+            `;
+            
+            // Format the reward function code for display
+            const formattedCode = config.rewardCode ? 
+                config.rewardCode.replace(/\\n/g, '\n').replace(/function\(/, 'function(') :
+                'No reward function generated yet';
+            
+            modal.innerHTML = `
+                <h3 style="color: ${config.color}; margin-top: 0;">${config.name} - Reward Function</h3>
+                <p style="color: #74b3ff;">Focus: ${config.rewardFocus}</p>
+                <pre style="white-space: pre-wrap; font-size: 12px; color: #f0f0f0; background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px;">${formattedCode}</pre>
+                <button onclick="this.parentElement.remove()" style="margin-top: 20px;">Close</button>
+            `;
+            document.body.appendChild(modal);
         }
     </script>
 </body>
