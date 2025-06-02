@@ -200,6 +200,8 @@ This is an ambitious open-source endeavor. Contributions, ideas, and feedback ar
 
 Here are some resources that provide more context or are related to the technologies used in this project:
 
+- [RL System Overview](./RL_SYSTEM_OVERVIEW.md) - A detailed explanation of the current reinforcement learning implementation (`browser-rl.js`).
+
 *   **MuJoCo Physics Engine:**
     *   [Official MuJoCo Website](https://mujoco.org/) - Main page for the MuJoCo physics simulator.
     *   [MuJoCo Documentation](https://mujoco.readthedocs.io/en/latest/) - Detailed documentation on using MuJoCo.
