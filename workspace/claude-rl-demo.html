@@ -17,8 +17,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <script src="./mujoco-orchestrator-v3.js"></script>
     <script src="./browser-rl.js"></script>
+    <script src="./ppo-agent.js"></script>
     <script src="./claude-reward-generator.js"></script>
     <script src="./visualization-2d.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -399,6 +401,13 @@
                 <button id="testPolicyBtn" onclick="testPolicy()" disabled>
                     🎮 Test Policy
                 </button>
+                <button class="control-button" id="exportPolicyBtn" style="margin-left: 10px;">
+                    💾 Export Policy
+                </button>
+                <button class="control-button" id="importPolicyBtn" style="margin-left: 10px;">
+                    📁 Import Policy
+                </button>
+                <input type="file" id="policyFileInput" accept=".json" style="display: none;">
             </div>
 
             <div class="chart-container">
@@ -473,8 +482,8 @@ Ready to generate reward function when you describe a task! 🎯
                 
                 // Initialize instances
                 window.demoState.claudeGenerator = new ClaudeRewardGenerator();
-                window.demoState.rl = new BrowserRL();
-                
+                window.demoState.rl = new PPOAgent(83, 21); // stateDim = 83 (from grootState), actionDim = 21
+                                
                 // Initialize orchestrator with single environment for training
                 console.log('Creating OptimizedOrchestrator...');
                 window.demoState.orchestrator = new OptimizedOrchestrator(1, 1);
@@ -722,24 +731,62 @@ Ready to generate reward function when you describe a task! 🎯
                         const rewardCode = `
                             const bodyPos = state.bodyPos || [0, 0, 0];
                             const bodyVel = state.bodyVel || [0, 0, 0];
+                            const bodyQuat = state.bodyQuaternion || [1, 0, 0, 0];
                             
-                            // Base survival reward
-                            let reward = 1.0;
+                            // Safety checks
+                            if (!Array.isArray(bodyPos) || bodyPos.length < 3 ||
+                                !Array.isArray(bodyVel) || bodyVel.length < 3 ||
+                                (!Array.isArray(action) && !ArrayBuffer.isView(action)) || action.length === 0) {
+                                console.warn('Invalid state or action in reward function:', {bodyPos, bodyVel, action});
+                                return 0;
+                            }
                             
-                            // Forward progress reward (more generous)
-                            reward += Math.max(0, bodyVel[0]) * 3.0;
+                            // Check for NaN values
+                            if (bodyPos.some(isNaN) || bodyVel.some(isNaN) || Array.from(action).some(isNaN)) {
+                                console.warn('NaN values detected in reward function inputs');
+                                return 0;
+                            }
                             
-                            // Height reward (stay upright)
-                            const heightReward = Math.max(0, (bodyPos[2] - 0.8) * 2.0);
-                            reward += heightReward;
+                            // Base alive bonus (encourage survival)
+                            let reward = 5.0;
                             
-                            // Small energy penalty
-                            const energyPenalty = action.reduce((sum, a) => sum + a*a, 0) * 0.0001;
-                            reward -= energyPenalty;
+                            // Forward progress reward (scaled up significantly)
+                            const forwardVel = bodyVel[0];
+                            reward += forwardVel * 10.0; // Much higher weight
                             
-                            // Only penalize if really fallen
+                            // Height maintenance (more forgiving)
+                            const targetHeight = 1.3;
+                            const heightError = Math.abs(bodyPos[2] - targetHeight);
+                            if (bodyPos[2] > 0.8) { // Only reward if reasonably upright
+                                reward += Math.exp(-heightError * 2) * 2.0; // Gaussian-like reward
+                            }
+                            
+                            // Upright bonus (using quaternion)
+                            const uprightness = bodyQuat[0]; // w component, 1 = perfectly upright
+                            reward += uprightness * 2.0;
+                            
+                            // Small control penalty (reduced from 0.0001)
+                            const controlCost = action.reduce((sum, a) => sum + Math.abs(a), 0) * 0.001;
+                            reward -= controlCost;
+                            
+                            // Lateral movement penalty (encourage straight walking)
+                            reward -= Math.abs(bodyVel[1]) * 0.5;
+                            
+                            // Termination conditions with clear penalties
                             if (bodyPos[2] < 0.5) {
-                                reward -= 5.0;
+                                reward -= 100.0; // Big penalty but not catastrophic
+                                return { reward: reward, done: true };
+                            }
+                            
+                            // Bonus for maintaining reasonable speed
+                            if (forwardVel > 0.1 && forwardVel < 2.0) {
+                                reward += 2.0;
+                            }
+                            
+                            // Final safety check
+                            if (isNaN(reward) || !isFinite(reward)) {
+                                console.warn('Invalid reward calculated:', reward);
+                                return 0;
                             }
                             
                             return reward;
@@ -938,9 +985,9 @@ Please try again with a different task description.`;
                         
                         if (!state || !state.observation) return;
                         
-                        // Get state and compute action
-                        const stateVec = window.demoState.rl.observationToVector(state.observation);
-                        const action = window.demoState.rl.policy.forward(stateVec);
+                        // Get state and compute action using PPOAgent
+                        const stateVec = window.demoState.rl.extractState(state.observation);
+                        const { action } = window.demoState.rl.getAction(stateVec, false); // false = not training
                         
                         // Apply action
                         window.demoState.orchestrator.setAction(0, action);
@@ -1017,6 +1064,103 @@ Please try again with a different task description.`;
                         }, 3000);
                     }
                 }
+
+                // Export policy handler
+                document.getElementById('exportPolicyBtn').addEventListener('click', () => {
+                    if (!window.demoState.rl) {
+                        alert('No policy to export! Train a policy first.');
+                        return;
+                    }
+                    
+                    try {
+                        // Export the policy weights
+                        const policyData = {
+                            type: 'PPOAgent',
+                            timestamp: new Date().toISOString(),
+                            taskDescription: document.getElementById('taskInput').value,
+                            actor: window.demoState.rl.actor.getWeights().map(w => ({
+                                data: Array.from(w.dataSync()),
+                                shape: w.shape
+                            })),
+                            critic: window.demoState.rl.critic.getWeights().map(w => ({
+                                data: Array.from(w.dataSync()),
+                                shape: w.shape
+                            })),
+                            config: {
+                                stateDim: window.demoState.rl.stateDim,
+                                actionDim: window.demoState.rl.actionDim,
+                                hiddenDim: window.demoState.rl.hiddenDim
+                            }
+                        };
+                        
+                        // Create download link
+                        const blob = new Blob([JSON.stringify(policyData, null, 2)], {type: 'application/json'});
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `ppo-policy-${Date.now()}.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        
+                        console.log('Policy exported successfully');
+                    } catch (error) {
+                        console.error('Failed to export policy:', error);
+                        alert('Failed to export policy: ' + error.message);
+                    }
+                });
+                
+                // Import policy handler
+                document.getElementById('importPolicyBtn').addEventListener('click', () => {
+                    document.getElementById('policyFileInput').click();
+                });
+                
+                document.getElementById('policyFileInput').addEventListener('change', async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    
+                    try {
+                        const text = await file.text();
+                        const policyData = JSON.parse(text);
+                        
+                        if (policyData.type !== 'PPOAgent') {
+                            throw new Error('Invalid policy file');
+                        }
+                        
+                        // Create new PPOAgent with saved config
+                        window.demoState.rl = new PPOAgent(
+                            policyData.config.stateDim,
+                            policyData.config.actionDim,
+                            policyData.config.hiddenDim
+                        );
+                        
+                        // Load actor weights
+                        const actorWeights = policyData.actor.map(w => 
+                            tf.tensor(w.data, w.shape)
+                        );
+                        window.demoState.rl.actor.setWeights(actorWeights);
+                        
+                        // Load critic weights
+                        const criticWeights = policyData.critic.map(w => 
+                            tf.tensor(w.data, w.shape)
+                        );
+                        window.demoState.rl.critic.setWeights(criticWeights);
+                        
+                        // Update task description if available
+                        if (policyData.taskDescription) {
+                            document.getElementById('taskInput').value = policyData.taskDescription;
+                        }
+                        
+                        console.log('Policy imported successfully');
+                        alert('Policy imported successfully! You can now test it.');
+                        
+                    } catch (error) {
+                        console.error('Failed to import policy:', error);
+                        alert('Failed to import policy: ' + error.message);
+                    }
+                    
+                    // Reset file input
+                    e.target.value = '';
+                });
             } catch (error) {
                 console.error('Failed to initialize demo:', error);
             }
