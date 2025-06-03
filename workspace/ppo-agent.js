@@ -4,14 +4,14 @@ class PPOAgent {
   constructor(
     stateDim = 83,
     actionDim = 21,
-    actorLearningRate = 3e-4,
-    criticLearningRate = 3e-4,
+    actorLr = 3e-4,
+    criticLr = 3e-4,
     hiddenDim = 256
   ) {
     this.stateDim = stateDim;
     this.actionDim = actionDim;
-    this.actorLearningRate = actorLearningRate;
-    this.criticLearningRate = criticLearningRate;
+    this.actorLr = actorLr;
+    this.criticLr = criticLr;
     this.hiddenDim = hiddenDim;
 
     // Ensure TensorFlow.js is available
@@ -25,23 +25,30 @@ class PPOAgent {
     this.actor = this._createActorNetwork();
     this.critic = this._createCriticNetwork();
 
-    this.actorOptimizer = tf.train.adam(this.actorLearningRate);
-    this.criticOptimizer = tf.train.adam(this.criticLearningRate);
+    this.actorOptimizer = tf.train.adam(this.actorLr);
+    this.criticOptimizer = tf.train.adam(this.criticLr);
 
     // PPO-specific hyperparameters (will be used later)
     this.gamma = 0.99; // Discount factor for future rewards
-    this.lambda = 0.95; // Factor for GAE (Generalized Advantage Estimation)
-    this.clipEpsilon = 0.2; // Clipping parameter for PPO loss
-    this.epochs = 10; // Number of epochs to train on a batch of data
+    this.lambda = 0.95; // GAE lambda for advantage estimation
+    this.clipEpsilon = 0.2; // PPO clipping parameter
+    this.epochs = 10; // Number of epochs to train on each batch
+    this.miniBatchSize = 64; // Mini-batch size for training
+    this.maxMemorySize = 2048; // Maximum memory buffer size
+    this.entropyCoef = 0.01; // Entropy bonus to encourage exploration
+    this.valueLossCoef = 0.5; // Coefficient for value loss
+    this.maxGradNorm = 0.5; // Maximum gradient norm for clipping
     this.batchSize = 64; // Batch size for training
-    this.maxGradNorm = 0.5; // Gradient clipping
-    this.valueLossCoef = 0.5; // Value function loss coefficient
-    this.entropyCoef = 0.01; // Entropy bonus for exploration
 
     this.memory = []; // Buffer to store trajectories
     this.prevState = null;
     this.prevAction = null;
     this.prevLogProb = null;
+    
+    // Add NaN check counter
+    this.nanCounter = 0;
+    this.maxNaNAttempts = 5;
+    this.episodeCount = 0;
     
     console.log("PPOAgent initialized with TensorFlow.js and memory buffer.");
   }
@@ -100,8 +107,34 @@ class PPOAgent {
     return model;
   }
 
+  _checkAndResetIfNaN() {
+    // Check if actor network has NaN weights
+    let hasNaN = false;
+    this.actor.layers.forEach(layer => {
+      if (layer.getWeights().length > 0) {
+        const weights = layer.getWeights()[0];
+        const weightData = weights.dataSync();
+        if (Array.from(weightData).some(w => isNaN(w) || !isFinite(w))) {
+          hasNaN = true;
+        }
+      }
+    });
+    
+    if (hasNaN) {
+      console.warn('NaN detected in actor network weights. Reinitializing...');
+      this.actor = this._createActorNetwork();
+      this.actorOptimizer = tf.train.adam(this.actorLr);
+      this.nanCounter = 0;
+    }
+    
+    return hasNaN;
+  }
+
   // Method to get an action from the policy (actor network)
   getAction(state, training = true) {
+    // Check for NaN in weights before forward pass
+    this._checkAndResetIfNaN();
+    
     return tf.tidy(() => {
       const stateTensor = tf.tensor2d([state]); // Batch size of 1
       const actorOutput = this.actor.predict(stateTensor);
@@ -114,13 +147,16 @@ class PPOAgent {
       );
 
       const mean = tf.tanh(mean_logits); // Apply tanh to get bounded mean
-      const std = tf.exp(log_std); // std = e^(log_std)
+      // Clip log_std to prevent extreme values
+      const clipped_log_std = tf.clipByValue(log_std, -2, 2);
+      const std = tf.exp(clipped_log_std); // std = e^(log_std)
 
       let actionTensor;
       if (training) {
-        // Manual normal distribution sampling
+        // Manual normal distribution sampling with exploration scheduling
+        const explorationScale = Math.max(0.3, 1.0 - this.episodeCount / 100); // Decay exploration
         const noise = tf.randomNormal(mean.shape);
-        actionTensor = tf.add(mean, tf.mul(noise, std));
+        actionTensor = tf.add(mean, tf.mul(tf.mul(noise, std), explorationScale));
       } else {
         actionTensor = mean; // Deterministic action for evaluation
       }
@@ -129,24 +165,32 @@ class PPOAgent {
       // Add a small epsilon to prevent issues if values are exactly at the boundary.
       actionTensor = tf.clipByValue(actionTensor, -1 + 1e-6, 1 - 1e-6);
 
-      // Calculate log probability of the sampled/chosen action
-      // For Normal distribution: log_prob = -0.5 * ((x - mean) / std)^2 - log(std) - 0.5 * log(2*pi)
+      // Calculate log probability (for PPO)
+      // log_prob = -0.5 * sum((action - mean)^2 / std^2) - sum(log(std)) - 0.5 * action_dim * log(2π)
       const diff = tf.sub(actionTensor, mean);
-      const normalizedDiff = tf.div(diff, std);
-      const logProb = tf.add(
-        tf.mul(tf.square(normalizedDiff), -0.5),
-        tf.add(
-          tf.mul(tf.log(std), -1),
-          tf.scalar(-0.5 * Math.log(2 * Math.PI))
-        )
-      );
+      const logProbTensor = tf
+        .mul(tf.square(diff), tf.div(1, tf.mul(2, tf.square(std))))
+        .add(tf.log(std))
+        .add(0.5 * Math.log(2 * Math.PI))
+        .mul(-1)
+        .sum(1);
+
+      const actionArray = actionTensor.arraySync()[0];
+      const logProbValue = logProbTensor.arraySync()[0];
       
-      // Sum log_probs across action dimensions to get a single logProb for the action vector.
-      const logProbTensor = tf.sum(logProb, 1); // axis=1 for TFJS
+      // NaN protection
+      const hasNaN = actionArray.some(a => isNaN(a) || !isFinite(a));
+      if (hasNaN || isNaN(logProbValue) || !isFinite(logProbValue)) {
+        console.warn('NaN detected in action generation, returning zeros');
+        return {
+          action: new Array(this.actionDim).fill(0),
+          logProb: 0
+        };
+      }
 
       return {
-        action: actionTensor.dataSync(), // Float32Array representing the action vector
-        logProb: logProbTensor.dataSync()[0], // Single float value for the log probability
+        action: actionArray,
+        logProb: logProbValue,
       };
     });
   }
@@ -168,7 +212,17 @@ class PPOAgent {
     envId = 0,
     maxStepsPerEpisode = 1000
   ) {
-    console.log(`PPOAgent: Starting episode ${envId}`);
+    const episodeStart = Date.now();
+    console.log(`PPOAgent: Starting episode ${this.episodeCount}`);
+    
+    // Apply learning rate decay after 30 episodes
+    if (this.episodeCount > 30 && this.episodeCount % 10 === 0) {
+      const newLr = this.actorLr * 0.95; // Slower decay
+      console.log(`Reducing learning rate from ${this.actorLr} to ${newLr}`);
+      this.actorLr = newLr;
+      this.actorOptimizer = tf.train.adam(this.actorLr);
+    }
+    
     let totalEpisodeReward = 0;
     let episodeSteps = 0;
 
@@ -266,19 +320,19 @@ class PPOAgent {
           clearInterval(stepInterval);
           
           console.log(
-            `PPOAgent: Episode ${envId} completed. Steps: ${episodeSteps}, Total Reward: ${totalEpisodeReward.toFixed(
+            `PPOAgent: Episode ${this.episodeCount} completed. Steps: ${episodeSteps}, Total Reward: ${totalEpisodeReward.toFixed(
               2
             )}`
           );
 
           // Train the agent with collected experience
-          if (this.memory.length > 0) {
-            console.log(
-              `PPOAgent: Training with ${this.memory.length} transitions...`
-            );
+          if (this.memory.length >= this.batchSize * 2) { // Wait for more data
+            console.log("Training PPO agent...");
             this.train();
             this.clearMemory();
           }
+
+          this.episodeCount++;
 
           resolve(totalEpisodeReward);
         }

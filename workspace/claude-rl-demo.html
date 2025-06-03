@@ -752,18 +752,18 @@ Ready to generate reward function when you describe a task! 🎯
                             
                             // Forward progress reward (scaled up significantly)
                             const forwardVel = bodyVel[0];
-                            reward += forwardVel * 10.0; // Much higher weight
+                            reward += forwardVel * 15.0; // Much higher weight
                             
                             // Height maintenance (more forgiving)
                             const targetHeight = 1.3;
                             const heightError = Math.abs(bodyPos[2] - targetHeight);
                             if (bodyPos[2] > 0.8) { // Only reward if reasonably upright
-                                reward += Math.exp(-heightError * 2) * 2.0; // Gaussian-like reward
+                                reward += Math.exp(-heightError * 2) * 3.0; // Gaussian-like reward
                             }
                             
                             // Upright bonus (using quaternion)
                             const uprightness = bodyQuat[0]; // w component, 1 = perfectly upright
-                            reward += uprightness * 2.0;
+                            reward += uprightness * 3.0;
                             
                             // Small control penalty (reduced from 0.0001)
                             const controlCost = action.reduce((sum, a) => sum + Math.abs(a), 0) * 0.001;
