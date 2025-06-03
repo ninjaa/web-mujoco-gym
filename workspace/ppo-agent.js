@@ -4,8 +4,8 @@ class PPOAgent {
   constructor(
     stateDim = 83,
     actionDim = 21,
-    actorLr = 3e-4,
-    criticLr = 3e-4,
+    actorLr = 1e-4,
+    criticLr = 1e-4,
     hiddenDim = 256
   ) {
     this.stateDim = stateDim;
@@ -44,11 +44,15 @@ class PPOAgent {
     this.prevState = null;
     this.prevAction = null;
     this.prevLogProb = null;
+    this.prevRawAction = null; // For action smoothing
     
     // Add NaN check counter
     this.nanCounter = 0;
     this.maxNaNAttempts = 5;
     this.episodeCount = 0;
+    
+    // Action smoothing parameter
+    this.actionSmoothingFactor = 0.7; // 0 = no smoothing, 1 = full smoothing
     
     console.log("PPOAgent initialized with TensorFlow.js and memory buffer.");
   }
@@ -68,17 +72,15 @@ class PPOAgent {
         activation: "relu",
       })
     );
-    // Output layer for continuous actions: concatenated mean_logits and log_std
-    // mean_logits will be passed through tanh later. log_std will be used to calculate std.
+    // Actor outputs mean and log_std for continuous actions
     model.add(
       tf.layers.dense({
-        units: this.actionDim * 2, // actionDim for mean_logits, actionDim for log_std
-        activation: "linear", // No activation here, will process them separately
+        units: 2 * this.actionDim, // mean + log_std for each action
+        activation: "linear",
+        kernelInitializer: 'glorotUniform',
+        biasInitializer: tf.initializers.constant({ value: -1.0 }) // Start with smaller actions
       })
     );
-    // For PPO, we also need to output the standard deviation (or log_std).
-    // A common approach is to have a separate head or learnable variable for log_std.
-    // For simplicity, we might start with a fixed std or add another output layer later.
     return model;
   }
 
@@ -188,10 +190,23 @@ class PPOAgent {
         };
       }
 
-      return {
-        action: actionArray,
-        logProb: logProbValue,
-      };
+      // Apply action smoothing
+      if (this.prevRawAction) {
+        const smoothedAction = actionArray.map((a, i) => {
+          return this.prevRawAction[i] * this.actionSmoothingFactor + a * (1 - this.actionSmoothingFactor);
+        });
+        this.prevRawAction = smoothedAction;
+        return {
+          action: smoothedAction,
+          logProb: logProbValue,
+        };
+      } else {
+        this.prevRawAction = actionArray;
+        return {
+          action: actionArray,
+          logProb: logProbValue,
+        };
+      }
     });
   }
 
@@ -273,7 +288,8 @@ class PPOAgent {
               jointAngles: envState.observation.qpos ? envState.observation.qpos.slice(7, 28) : new Array(21).fill(0),
               jointVelocities: envState.observation.qvel ? envState.observation.qvel.slice(6, 27) : new Array(21).fill(0),
               footContacts: [true, true], // Simplified
-              time: 0
+              time: 0,
+              prevAction: this.prevAction // Add previous action for smoothness
             };
             
             // Call reward function with both state and action (like BrowserRL does)

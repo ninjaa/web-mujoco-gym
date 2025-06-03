@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Claude + RL Robot Training Demo</title>
+    <title>Claude + RL Robot Training</title>
     
     <!-- Import map for Three.js modules -->
     <script type="importmap">
@@ -748,40 +748,54 @@ Ready to generate reward function when you describe a task! 🎯
                             }
                             
                             // Base alive bonus (encourage survival)
-                            let reward = 5.0;
+                            let reward = 2.0; // Reduced to make other rewards more important
                             
-                            // Forward progress reward (scaled up significantly)
+                            // Forward progress reward (primary objective)
                             const forwardVel = bodyVel[0];
-                            reward += forwardVel * 15.0; // Much higher weight
+                            if (forwardVel > 0) {
+                                reward += forwardVel * 20.0; // Even higher weight for forward motion
+                            }
                             
-                            // Height maintenance (more forgiving)
+                            // Height maintenance (softer penalty)
                             const targetHeight = 1.3;
                             const heightError = Math.abs(bodyPos[2] - targetHeight);
-                            if (bodyPos[2] > 0.8) { // Only reward if reasonably upright
-                                reward += Math.exp(-heightError * 2) * 3.0; // Gaussian-like reward
+                            if (bodyPos[2] > 0.7) { // Lower threshold
+                                reward += Math.exp(-heightError * 1.5) * 5.0; // Bigger reward for good height
                             }
                             
                             // Upright bonus (using quaternion)
-                            const uprightness = bodyQuat[0]; // w component, 1 = perfectly upright
-                            reward += uprightness * 3.0;
+                            const uprightness = Math.max(0, bodyQuat[0]); // w component, clamp negative
+                            reward += uprightness * 4.0;
                             
-                            // Small control penalty (reduced from 0.0001)
-                            const controlCost = action.reduce((sum, a) => sum + Math.abs(a), 0) * 0.001;
+                            // Smaller control penalty to allow stronger actions
+                            const controlCost = action.reduce((sum, a) => sum + a * a, 0) * 0.0005; // L2 penalty
                             reward -= controlCost;
                             
-                            // Lateral movement penalty (encourage straight walking)
-                            reward -= Math.abs(bodyVel[1]) * 0.5;
+                            // Lateral movement penalty (reduced)
+                            reward -= Math.abs(bodyVel[1]) * 0.2;
                             
-                            // Termination conditions with clear penalties
+                            // Action smoothness bonus (if we have previous action)
+                            if (state.prevAction) {
+                                const smoothness = action.reduce((sum, a, i) => {
+                                    const diff = a - state.prevAction[i];
+                                    return sum - diff * diff * 0.01;
+                                }, 0);
+                                reward += smoothness;
+                            }
+                            
+                            // Softer termination - allow recovery
                             if (bodyPos[2] < 0.5) {
-                                reward -= 100.0; // Big penalty but not catastrophic
-                                return { reward: reward, done: true };
+                                reward -= 20.0; // Much smaller penalty
+                                // Don't terminate immediately - give chance to recover
+                                if (bodyPos[2] < 0.3) {
+                                    return { reward: reward, done: true };
+                                }
                             }
                             
-                            // Bonus for maintaining reasonable speed
-                            if (forwardVel > 0.1 && forwardVel < 2.0) {
-                                reward += 2.0;
-                            }
+                            // Progressive speed bonus
+                            if (forwardVel > 0.2) reward += 5.0;
+                            if (forwardVel > 0.5) reward += 10.0;
+                            if (forwardVel > 1.0) reward += 20.0;
                             
                             // Final safety check
                             if (isNaN(reward) || !isFinite(reward)) {
