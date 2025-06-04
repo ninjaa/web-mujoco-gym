@@ -15,6 +15,7 @@ let updateInterval = null;
 let modelData = null;
 let resizeHandler = null;
 let dragStateManager = null;
+let dragArrow = null;
 
 // Make THREE available globally for debugging
 window.THREE = THREE;
@@ -141,17 +142,12 @@ export async function openEnvironment3D(envId, state) {
       // Start updating state from orchestrator
       console.log("Setting up update interval for env", envId);
       updateInterval = setInterval(async () => {
-        console.log("Update interval tick - checking orchestrator...");
+        // Removed noisy update logs
         if (window.demoState?.orchestrator) {
           const newState = window.demoState.orchestrator.getEnvironmentState(envId);
           if (newState) {
-            console.log("Got new state, calling updateRobotPose...");
             updateRobotPose(newState);
-          } else {
-            console.log("No new state available");
           }
-        } else {
-          console.log("No orchestrator available");
         }
       }, 50); // Update at 20Hz
       
@@ -476,8 +472,10 @@ function createRobot() {
           // Cast shadows
           mesh.castShadow = true;
           mesh.receiveShadow = true;
-          // Set bodyID for drag interaction
-          mesh.bodyID = body.index;
+          // Set bodyID for drag interaction (use userData format)
+          mesh.userData.bodyID = body.index;
+          mesh.userData.bodyName = body.name;
+          mesh.bodyID = body.index; // Keep this for backward compatibility
           bodyGroup.add(mesh);
         }
       });
@@ -616,14 +614,8 @@ function updateRobotPose(state) {
   // Get body positions and rotations from physics
   const envState = window.demoState?.orchestrator?.getEnvironmentState(currentEnvId);
   if (!envState) {
-    console.log("No envState available");
     return;
   }
-
-  // Debug: Check what observation data we have
-  console.log("Observation keys:", Object.keys(envState.observation));
-  console.log("Has xpos:", !!envState.observation.xpos);
-  console.log("Has xquat:", !!envState.observation.xquat);
 
   // Check if we have access to MuJoCo xpos and xquat data
   if (
@@ -631,7 +623,6 @@ function updateRobotPose(state) {
     envState.observation.xpos &&
     envState.observation.xquat
   ) {
-    console.log("Using full body physics data");
     // Update each body's position and rotation
     if (robotGroup.bodyMap) {
       for (let bodyName in robotGroup.bodyMap) {
@@ -673,10 +664,8 @@ function updateRobotPose(state) {
       }
     }
   } else {
-    console.log("Using fallback position update");
     // Fallback to simple position update if full body data not available
     if (state.observation.bodyPos) {
-      console.log("Updating robot position:", state.observation.bodyPos);
 
       // Convert MuJoCo coordinates to Three.js
       const mjPos = state.observation.bodyPos;
@@ -693,7 +682,7 @@ function updateRobotPose(state) {
     ? state.observation.bodyPos[2]
     : 1;
   if (torsoHeight < 0.1) {
-    console.log("Robot has fallen! Torso height:", torsoHeight);
+    // Robot has fallen
   }
 }
 
@@ -716,10 +705,35 @@ function animate(state) {
     
     const dragged = dragStateManager.physicsObject;
     if (dragged && dragged.bodyID && window.demoState?.orchestrator) {
-      // Calculate force vector
+      // Initialize dragState if not exists
+      if (!window.demoState.dragState) {
+        window.demoState.dragState = { active: false, pausedPPO: false };
+      }
+      
+      // Mark drag as active
+      window.demoState.dragState.active = true;
+      
+      // DISABLED: Don't stop CleanRL control during drag
+      // Let's see if PPO can fight against drag forces!
+      console.log('🎮 PPO control continues during drag interaction');
+      console.log('🔍 DEBUG: cleanRLControlRunning:', window.demoState.cleanRLControlRunning);
+      
       const force = dragStateManager.currentWorld.clone()
         .sub(dragStateManager.worldHit)
-        .multiplyScalar(15); // Balanced force for responsive dragging
+        .multiplyScalar(150000); // EXTREME force - 3x previous amount!
+      
+      // Remove old arrow before creating new one
+      if (dragArrow) {
+        scene.remove(dragArrow);
+        dragArrow = null;
+      }
+      
+      // Calculate force vector
+      const direction = force.clone().normalize();
+      const origin = dragStateManager.worldHit.clone();
+      const length = Math.min(force.length() * 0.01, 2); // Scale arrow length
+      dragArrow = new THREE.ArrowHelper(direction, origin, length, 0xff0000, length * 0.2, length * 0.1);
+      scene.add(dragArrow);
       
       // Convert to MuJoCo coordinates
       const mjForce = threeToMujocoPosition(force);
@@ -727,12 +741,27 @@ function animate(state) {
       
       // Send force to physics simulation
       window.demoState.orchestrator.applyForce(currentEnvId, dragged.bodyID, mjForce, mjPoint);
+      
+      console.log(`Applying MASSIVE force ${mjForce} to body ${dragged.bodyID} (${dragged.name || 'unknown'}) at ${mjPoint}`);
     } else if (dragStateManager.lastDraggedBody && !dragged) {
-      // Drag ended, clear forces
+      // Drag ended, clear forces and remove arrow
+      if (window.demoState?.dragState) {
+        console.log('🏁 Drag interaction ended');
+        window.demoState.dragState.active = false;
+        
+        // DISABLED: PPO never stopped, so no need to restart
+        console.log('🏁 Drag ended - PPO control was never paused');
+      }
+      
       if (window.demoState?.orchestrator) {
         window.demoState.orchestrator.applyForce(currentEnvId, dragStateManager.lastDraggedBody, [0, 0, 0], [0, 0, 0]);
       }
+      if (dragArrow) {
+        scene.remove(dragArrow);
+        dragArrow = null;
+      }
       dragStateManager.lastDraggedBody = null;
+      console.log('Drag ended, forces cleared, PPO frequency restored');
     }
     
     // Track last dragged body

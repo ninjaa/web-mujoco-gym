@@ -2,27 +2,28 @@
  * Enhanced state extractor for MuJoCo Humanoid to match CleanRL's 376-dimensional observation
  * 
  * CleanRL Humanoid-v4 observation (376 dimensions):
- * - qpos: 28 (positions)
+ * - qpos: 22 (positions, excluding first 2 x,y coordinates)
  * - qvel: 23 (velocities)  
  * - cinert: 130 (13 bodies × 10 values each - inertia and mass)
  * - cvel: 78 (13 bodies × 6 values each - linear and angular velocities)
  * - qfrc_actuator: 17 (actuator forces)
  * - cfrc_ext: 78 (13 bodies × 6 values each - external forces and torques)
- * - Additional features: 22 (x,y position, previous actions, time step, energy, etc.)
- * Total: 28 + 23 + 130 + 78 + 17 + 78 + 22 = 376
+ * - x,y coordinates: 2 (the excluded qpos values)
+ * - Additional features: 26 (previous actions, etc.)
+ * Total: 22 + 23 + 130 + 78 + 17 + 78 + 2 + 26 = 376
  */
 
 class EnhancedStateExtractor {
   constructor() {
     // Updated for CleanRL Humanoid-v4 compatibility (376 dimensions)
-    this.nq = 28;  // position dimensions (use all available from our model)
+    this.nq = 22;  // position dimensions (24 minus first 2 x,y coords)
     this.nv = 23;  // velocity dimensions (includes free joint)
     this.nbody = 13;  // number of bodies (excluding world)
     this.nu = 17;  // number of actuators
     
     // Expected dimensions for 376 total:
-    // qpos(28) + qvel(23) + cinert(130) + cvel(78) + qfrc_actuator(17) + cfrc_ext(78) = 354
-    // We need 22 more dimensions - likely from including x,y coordinates and other features
+    // qpos(22) + qvel(23) + cinert(130) + cvel(78) + qfrc_actuator(17) + cfrc_ext(78) = 348
+    // We need 28 more dimensions - the x,y coordinates (2) plus additional features (26)
   }
 
   /**
@@ -59,17 +60,18 @@ class EnhancedStateExtractor {
     const cfrc_ext = this.extractCfrcExt(simulation, model);
     state.push(...cfrc_ext);
     
-    // Current total: 28+23+130+78+17+78 = 354
-    // Need 376, so add 22 more dimensions
+    // Current total: 22+23+130+78+17+78 = 348
+    // Need 376, so add 28 more dimensions (2 for x,y + 26 additional)
     
-    // 7. Add x,y position coordinates (2 elements) if available
+    // 7. Add x,y position coordinates (2 elements) from qpos
+    // These are the first 2 qpos values that we excluded earlier
     let xyPos = [0, 0];
-    if (simulation.xpos && simulation.xpos.length >= 3) {
-      xyPos = [simulation.xpos[0] || 0, simulation.xpos[1] || 0];
+    if (simulation.qpos && simulation.qpos.length >= 2) {
+      xyPos = [simulation.qpos[0] || 0, simulation.qpos[1] || 0];
     }
     state.push(...xyPos);
     
-    // 8. Add 20 more dimensions to reach 376 total
+    // 8. Add 26 more dimensions to reach 376 total
     // These could be additional physics features that CleanRL includes
     const additionalFeatures = this.extractAdditionalFeatures(simulation, model);
     state.push(...additionalFeatures);
@@ -91,18 +93,24 @@ class EnhancedStateExtractor {
 
   extractQpos(simulation, model) {
     const qpos = [];
-    // Use all 28 qpos elements to match CleanRL model
     
     if (simulation.qpos) {
-      // Take first 28 elements (or all available)
-      for (let i = 0; i < Math.min(this.nq, simulation.qpos.length); i++) {
+      // IMPORTANT: Gym Humanoid-v4 excludes the first 2 qpos values (x, y coordinates)
+      // Start from index 2 to match Gym's observation space
+      for (let i = 2; i < simulation.qpos.length; i++) {
         qpos.push(simulation.qpos[i]);
       }
     }
     
+    // We should have 22 elements (24 total minus first 2)
     // Pad with zeros if needed
-    while (qpos.length < this.nq) {
+    while (qpos.length < 22) {
       qpos.push(0);
+    }
+    
+    // Ensure we don't exceed 22 elements
+    if (qpos.length > 22) {
+      qpos.length = 22;
     }
     
     return qpos;
@@ -243,7 +251,7 @@ class EnhancedStateExtractor {
   }
 
   extractAdditionalFeatures(simulation, model) {
-    // Extract 20 additional features to reach 376 total dimensions
+    // Extract 26 additional features to reach 376 total dimensions
     const features = [];
     
     // Add some commonly used RL features that CleanRL might include:
@@ -260,17 +268,18 @@ class EnhancedStateExtractor {
       }
     }
     
-    // 2. Add 3 more features (time step, energy, etc.)
-    features.push(0); // Time step (placeholder)
-    features.push(0); // Energy (placeholder) 
-    features.push(0); // Additional feature (placeholder)
-    
-    // Ensure exactly 20 features
-    while (features.length < 20) {
+    // 2. Add 9 more features to reach 26 total
+    // These could be additional sensor data or computed features
+    for (let i = 0; i < 9; i++) {
       features.push(0);
     }
-    if (features.length > 20) {
-      features.length = 20;
+    
+    // Ensure exactly 26 features
+    while (features.length < 26) {
+      features.push(0);
+    }
+    if (features.length > 26) {
+      features.length = 26;
     }
     
     return features;

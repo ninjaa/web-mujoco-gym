@@ -14,6 +14,18 @@ let dragState = null; // Store current drag state
 let modelLoaded = false;
 let currentRewardFunction = null;
 let enhancedExtractor = null; // Enhanced state extractor instance
+let dragMissingLogged = false; // Track if we've logged missing dragState
+
+// Debug: Track worker identity
+const workerId = Math.random().toString(36).substr(2, 9);
+console.log(`🔷 Worker ${workerId} created`);
+
+// Add periodic dragState status check
+setInterval(() => {
+    if (dragState && dragState.active) {
+        console.log(`🔷 Worker ${workerId}: dragState still active for body ${dragState.bodyId}, force: ${dragState.forceMag?.toFixed(0)}N`);
+    }
+}, 1000);
 
 // Initialize MuJoCo when worker starts
 self.onmessage = async function(e) {
@@ -27,11 +39,16 @@ self.onmessage = async function(e) {
     try {
         switch (type) {
             case 'init':
+                console.log(`🔷 Worker ${workerId} initializing for envId: ${data.envId}`);
                 await initializeMuJoCo(data, id);
                 break;
                 
             case 'step':
                 if (simulation) {
+                    // Check if this step is for the right environment
+                    if (data.envId !== envConfig?.envId) {
+                        console.log(`⚠️ Step message for envId ${data.envId} but worker is for envId ${envConfig?.envId}`);
+                    }
                     stepSimulation(data, id);
                 } else {
                     throw new Error('Simulation not initialized');
@@ -56,9 +73,30 @@ self.onmessage = async function(e) {
                 
             case 'applyForce':
                 if (simulation && mujoco) {
+                    console.log(`🎯 Worker received applyForce message for envId: ${data.envId}, worker configured for envId: ${envConfig?.envId}`);
                     applyForce(data, id);
                 } else {
                     throw new Error('Simulation not initialized');
+                }
+                break;
+                
+            case 'clearActuators':
+                if (simulation && simulation.ctrl) {
+                    for (let i = 0; i < simulation.ctrl.length; i++) {
+                        simulation.ctrl[i] = 0;
+                    }
+                    console.log(`Worker: Cleared ${simulation.ctrl.length} actuator controls for envId ${data.envId}`);
+                    // Optionally, send a confirmation back to the orchestrator
+                    self.postMessage({
+                        type: 'actuatorsCleared',
+                        id: id, // Use the orchestrator's message ID for correlation
+                        data: {
+                            envId: data.envId,
+                            clearedControls: simulation.ctrl.length
+                        }
+                    });
+                } else {
+                    console.error(`Worker: Could not clear actuators for envId ${data.envId}. Simulation or ctrl array not found.`);
                 }
                 break;
                 
@@ -127,7 +165,17 @@ async function initializeMuJoCo(config, id) {
             state = new mujoco.State(model);
             simulation = new mujoco.Simulation(model, state);
             // Initialize enhanced state extractor
-            enhancedExtractor = new EnhancedStateExtractor();
+            if (typeof EnhancedStateExtractor !== 'undefined') {
+                enhancedExtractor = new EnhancedStateExtractor();
+            }
+            
+            // Debug: Check available force methods
+            console.log('Force methods available:');
+            console.log('  simulation.applyForce:', typeof simulation.applyForce);
+            console.log('  simulation.xfrc_applied:', simulation.xfrc_applied ? 'array length ' + simulation.xfrc_applied.length : 'undefined');
+            console.log('  simulation.qfrc_applied:', simulation.qfrc_applied ? 'array length ' + simulation.qfrc_applied.length : 'undefined');
+            console.log('  model.nbody:', model.nbody, '(number of bodies)');
+            console.log('  model.nv:', model.nv, '(degrees of freedom)');
         } catch (error) {
             throw new Error(`Failed to create simulation: ${error.message}`);
         }
@@ -275,6 +323,19 @@ function stepSimulation(data, id) {
     
     const { actions, envId } = data || {};
     
+    // Removed noisy step logs - only log when drag is active
+    
+    // Debug: Only log dragState status when it exists
+    if (dragState && dragState.active) {
+        console.log(`🔷 Worker ${workerId} stepSimulation for envId ${envId}: dragState ACTIVE for body ${dragState.bodyId}, force: ${dragState.forceMag?.toFixed(0)}N`);
+    }
+    
+    // Debug: Log dragState status at start of physics step
+    if (dragState && dragState.active && !dragState.startLogged) {
+        console.log('📍 stepSimulation START - dragState is ACTIVE:', dragState.bodyId, 'force:', dragState.forceMag?.toFixed(0) + 'N');
+        dragState.startLogged = true;
+    }
+    
     // Ensure envState is initialized
     if (!envState) {
         envState = {
@@ -290,26 +351,119 @@ function stepSimulation(data, id) {
             // The humanoid has 21 actuators
             const numActuators = model.nu;
             
+            // Log action strength when drag is active
+            if (dragState && dragState.active) {
+                const actionMag = Math.sqrt(actions.reduce((sum, a) => sum + a*a, 0));
+                console.log(`🤖 Applying CleanRL actions during drag: magnitude=${actionMag.toFixed(3)}, max=${Math.max(...actions.map(Math.abs)).toFixed(3)}`);
+            }
+            
             for (let i = 0; i < Math.min(actions.length, numActuators); i++) {
                 simulation.ctrl[i] = actions[i];
+            }
+        }
+        
+        // Debug: Check dragState status
+        if (!dragState) {
+            // Log once when dragState is missing
+            if (!dragMissingLogged) {
+                console.log('❌ No dragState during physics step');
+                dragMissingLogged = true;
+            }
+        } else {
+            // Always log when dragState exists and is active
+            if (dragState.active && !dragState.stepLogged) {
+                console.log('🔍 DragState ACTIVE in physics step:', dragState.bodyId, 'force mag:', dragState.forceMag?.toFixed(0));
+                dragState.stepLogged = true;
             }
         }
         
         // Apply drag forces if active
         if (dragState && dragState.active) {
             const { bodyId, force, point } = dragState;
-            if (simulation.applyForce) {
-                simulation.applyForce(
-                    force[0], force[1], force[2],  // force
-                    0, 0, 0,  // torque
-                    point[0], point[1], point[2],  // point
-                    bodyId
-                );
+            const forceMag = Math.sqrt(force[0]**2 + force[1]**2 + force[2]**2);
+            console.log(`🚀 FOUND ACTIVE DRAG STATE in physics! Body ${bodyId}, force: ${forceMag.toFixed(0)}N`);
+            // Only log significant forces to reduce noise
+            if (forceMag > 1000) {
+                console.log(`🎯 PHYSICS STEP: Applying force to body ${bodyId}: magnitude=${forceMag.toFixed(0)}N, upward=${force[2].toFixed(0)}N`);
+            }
+            
+            // ALWAYS use xfrc_applied directly - applyForce method doesn't seem to work
+            if (simulation.xfrc_applied) {
+                // CORRECT: Use xfrc_applied for external body forces (MuJoCo official API)
+                console.log(`📌 Using xfrc_applied method for body ${bodyId}`);
+                const forceIndex = bodyId * 6; // Each body has 6 DOF (3 force + 3 torque)
+                console.log(`  xfrc_applied.length: ${simulation.xfrc_applied.length}, forceIndex: ${forceIndex}, bodyId: ${bodyId}`);
+                
+                if (forceIndex + 5 < simulation.xfrc_applied.length) {
+                    // Apply forces (MuJoCo will clear these after each step)
+                    simulation.xfrc_applied[forceIndex] = force[0];
+                    simulation.xfrc_applied[forceIndex + 1] = force[1];
+                    simulation.xfrc_applied[forceIndex + 2] = force[2];
+                    // Keep torques at zero
+                    simulation.xfrc_applied[forceIndex + 3] = 0;
+                    simulation.xfrc_applied[forceIndex + 4] = 0;
+                    simulation.xfrc_applied[forceIndex + 5] = 0;
+                    
+                    console.log(`✅ Applied force to xfrc_applied[${forceIndex}]: [${force[0].toFixed(0)}, ${force[1].toFixed(0)}, ${force[2].toFixed(0)}]`);
+                    console.log(`  Force values set in array:`, 
+                        simulation.xfrc_applied[forceIndex].toFixed(0),
+                        simulation.xfrc_applied[forceIndex + 1].toFixed(0),
+                        simulation.xfrc_applied[forceIndex + 2].toFixed(0)
+                    );
+                } else {
+                    console.error(`❌ forceIndex ${forceIndex} out of bounds for xfrc_applied length ${simulation.xfrc_applied.length}`);
+                }
+            } else if (simulation.qfrc_applied) {
+                // FALLBACK: Use qfrc_applied for generalized forces (less suitable for drag)
+                console.log('Using qfrc_applied array method (fallback)');
+                
+                // Apply force to all joints connected to this body
+                // This is a simplified approach - ideally we'd use mj_applyFT
+                const nv = simulation.qfrc_applied.length;
+                console.log(`qfrc_applied length: ${nv}, applying forces...`);
+                
+                // Apply force to relevant DOF - simplified for torso/arm movements
+                if (bodyId >= 0 && bodyId < nv / 6) {
+                    const baseIndex = bodyId * 6;
+                    if (baseIndex + 5 < nv) {
+                        simulation.qfrc_applied[baseIndex] += force[0];     // Full force - no scaling
+                        simulation.qfrc_applied[baseIndex + 1] += force[1];
+                        simulation.qfrc_applied[baseIndex + 2] += force[2];
+                        console.log(`Applied forces to qfrc_applied[${baseIndex}:${baseIndex+2}]:`, 
+                                  [simulation.qfrc_applied[baseIndex], 
+                                   simulation.qfrc_applied[baseIndex+1], 
+                                   simulation.qfrc_applied[baseIndex+2]]);
+                    }
+                }
+            } else {
+                console.log('No known force application method found');
             }
         }
         
-        // Step physics
+        // Debug: Check xfrc_applied values right before step
+        if (dragState && dragState.active && simulation.xfrc_applied) {
+            const bodyId = dragState.bodyId;
+            const forceIndex = bodyId * 6;
+            if (forceIndex + 2 < simulation.xfrc_applied.length) {
+                const fx = simulation.xfrc_applied[forceIndex];
+                const fy = simulation.xfrc_applied[forceIndex + 1];
+                const fz = simulation.xfrc_applied[forceIndex + 2];
+                const mag = Math.sqrt(fx*fx + fy*fy + fz*fz);
+                console.log(`🔥 RIGHT BEFORE step(): xfrc_applied[${forceIndex}] = [${fx.toFixed(0)}, ${fy.toFixed(0)}, ${fz.toFixed(0)}], magnitude: ${mag.toFixed(0)}N`);
+            }
+        }
+        
+        // Step physics (this will apply the forces we just set)
         simulation.step();
+        
+        // MuJoCo automatically clears xfrc_applied after each step
+        
+        // Clear old dragState if it's been around too long (more than 500ms)
+        // Increased timeout since drag updates come every ~50ms from 3D view
+        if (dragState && dragState.timestamp && Date.now() - dragState.timestamp > 500) {
+            console.log(`🟢 Clearing old dragState after physics step (age: ${Date.now() - dragState.timestamp}ms)`);
+            dragState = null;
+        }
         
         // Get observation after step
         const observation = getObservation();
@@ -482,7 +636,8 @@ function checkDone() {
             // Body not found
         }
         
-        return height < 0.1;
+        // For testing, only reset if REALLY fallen (was 0.1)
+        return height < 0.05;
     }
 }
 
@@ -536,19 +691,36 @@ function applyForce(data, id) {
     
     const { bodyId, force, point } = data;
     
-    // Store drag state to be applied during physics steps
+    // Debug log ALL applyForce calls
+    const forceMag = force ? Math.sqrt(force[0]**2 + force[1]**2 + force[2]**2) : 0;
+    console.log(`🔵 applyForce called: body=${bodyId}, forceMag=${forceMag.toFixed(0)}N, force=[${force?force.map(f=>f.toFixed(0)).join(','):'null'}]`);
+    
+    // Handle force application
     if (force && (force[0] !== 0 || force[1] !== 0 || force[2] !== 0)) {
+        // Always update dragState when force is non-zero
         dragState = {
-            active: true,
+            active: true,  // This is crucial - must be true for forces to apply
             bodyId: bodyId,
             force: force,
-            point: point
+            point: point,
+            forceMag: forceMag,
+            logged: false,  // Reset log flag for new drag
+            stepLogged: false,  // Reset step log flag
+            startLogged: false,  // Reset start log flag
+            timestamp: Date.now()  // Add timestamp to track timing
         };
-        console.log(`Drag state activated for body ${bodyId}`);
+        dragMissingLogged = false; // Reset missing flag when new drag starts
+        console.log(`✅ Drag state SET ACTIVE for body ${bodyId}: ${forceMag.toFixed(0)}N, active=${dragState.active}, time=${dragState.timestamp}`);
     } else {
-        // Clear drag state if force is zero
-        dragState = null;
-        console.log(`Drag state cleared`);
+        // Don't immediately clear drag state - let physics step handle it
+        // This prevents clearing between drag updates and physics steps
+        if (dragState && Date.now() - dragState.timestamp > 500) {
+            // Only clear if dragState is older than 500ms (increased from 100ms)
+            dragState = null;
+            console.log(`🟡 Drag state cleared (timeout)`);
+        } else if (forceMag === 0) {
+            console.log(`🟡 Zero force received but keeping dragState active for pending physics step`);
+        }
     }
     
     // Send confirmation

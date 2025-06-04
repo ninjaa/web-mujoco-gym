@@ -146,6 +146,9 @@ class PPOAgentCleanRL {
         this.isLoaded = true;
         console.log('🎉 CleanRL PPO model loaded successfully!');
         
+        // Initialize normalization
+        this.initializeNormalization();
+        
         // Test with dummy input
         await this.testModel();
         
@@ -175,9 +178,59 @@ class PPOAgentCleanRL {
       const result = await this.getActionAndValue(testState, true);
       console.log('✓ Test passed - Action sample:', result.action.slice(0, 5));
       console.log('✓ Test passed - Value estimate:', result.value);
+      
+      // Check action range
+      const minAction = Math.min(...result.action);
+      const maxAction = Math.max(...result.action);
+      console.log(`✓ Action range: [${minAction.toFixed(3)}, ${maxAction.toFixed(3)}]`);
+      
+      if (maxAction > 1.0 || minAction < -1.0) {
+        console.warn('⚠️ WARNING: Actions outside expected range [-1, 1]!');
+      }
     } catch (error) {
       console.error('❌ Model test failed:', error);
     }
+  }
+  
+  /**
+   * Initialize observation normalization parameters
+   * CleanRL uses running mean/std normalization
+   */
+  initializeNormalization() {
+    // Since we don't have the exact normalization statistics from training,
+    // we'll use a more conservative approach that just clips observations
+    // This matches CleanRL's clipping to [-10, 10] range
+    
+    console.log('Observation normalization initialized (using clipping only)');
+  }
+  
+  /**
+   * Normalize observations using running statistics
+   * This mimics gym.wrappers.NormalizeObservation
+   */
+  normalizeObservation(obs) {
+    // Without exact training statistics, use a simple per-feature normalization
+    // based on typical ranges for Humanoid-v4 observations
+    
+    const normalized = obs.map((value, idx) => {
+      // Different normalization for different parts of the observation
+      if (idx < 2) {
+        // x, y positions - these can grow large, normalize by dividing by 10
+        return value / 10.0;
+      } else if (idx < 28) {
+        // Other qpos values - typically in [-2, 2]
+        return value / 2.0;
+      } else if (idx < 51) {
+        // qvel values - typically in [-10, 10]
+        return value / 10.0;
+      } else {
+        // Forces and other features - can be very large
+        return value / 50.0;
+      }
+    });
+    
+    // Clip to [-10, 10] as CleanRL does
+    return normalized.map(v => Math.max(-10, Math.min(10, v)));
   }
   
   /**
@@ -192,8 +245,11 @@ class PPOAgentCleanRL {
       throw new Error(`Expected state dimension ${this.stateDim}, got ${state.length}`);
     }
     
+    // Normalize observation as CleanRL does
+    const normalizedState = this.normalizeObservation(state);
+    
     // Convert state to tensor
-    const stateTensor = tf.tensor2d([state], [1, this.stateDim]);
+    const stateTensor = tf.tensor2d([normalizedState], [1, this.stateDim]);
     
     try {
       // Get action mean from actor
@@ -201,6 +257,7 @@ class PPOAgentCleanRL {
       
       if (deterministic) {
         // Return mean action (deterministic policy)
+        // CleanRL does NOT apply tanh - actions are unbounded!
         const actionArray = await actionMean.data();
         actionMean.dispose();
         stateTensor.dispose();
@@ -211,6 +268,7 @@ class PPOAgentCleanRL {
         const noise = tf.randomNormal(actionMean.shape);
         const action = tf.add(actionMean, tf.mul(actionStd, noise));
         
+        // CleanRL does NOT apply tanh - actions are unbounded!
         const actionArray = await action.data();
         
         // Cleanup tensors

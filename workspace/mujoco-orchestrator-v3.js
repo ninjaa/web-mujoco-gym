@@ -4,9 +4,10 @@
  */
 
 class OptimizedOrchestrator {
-    constructor(numEnvironments = 12, numWorkers = 4) {
+    constructor(numEnvironments = 12, numWorkers = null) {
         this.numEnvironments = numEnvironments;
-        this.numWorkers = numWorkers;
+        // IMPORTANT: Use 1 worker per environment because each worker can only handle 1 simulation
+        this.numWorkers = numWorkers || numEnvironments;
         this.workers = [];
         this.environmentStates = new Map();
         this.initialized = false;
@@ -47,7 +48,6 @@ class OptimizedOrchestrator {
             const workerId = Math.floor(i / envsPerWorker);
             const promise = new Promise((resolve) => {
                 const listener = (e) => {
-                    console.log('Worker response:', e.data); // Debug log
                     if (e.data.type === 'initialized' && e.data.envId === i) {
                         this.workers[workerId].removeEventListener('message', listener);
                         console.log(`Environment ${i} initialized successfully`);
@@ -144,9 +144,19 @@ class OptimizedOrchestrator {
     }
     
     getAction(envId) {
-        // Check if we have a trained policy
+        const state = this.environmentStates.get(envId);
+        
+        // PRIORITY 1: Use CleanRL action if available (from setAction)
+        if (state && state.nextAction) {
+            const action = state.nextAction;
+            // Clear the action after using it (single-use)
+            state.nextAction = null;
+            // Removed noisy action log
+            return action;
+        }
+        
+        // PRIORITY 2: Check if we have a trained policy
         if (window.trainedPolicyNetwork) {
-            const state = this.environmentStates.get(envId);
             if (state && state.observation) {
                 // Convert observation to policy input format
                 const stateVec = this.observationToVector(state.observation);
@@ -155,16 +165,20 @@ class OptimizedOrchestrator {
                 const action = window.trainedPolicyNetwork.forward(stateVec);
                 
                 // Add small exploration noise for variety
-                return action.map(a => {
+                const noisyAction = action.map(a => {
                     const noise = (Math.random() - 0.5) * 0.05;
                     return Math.max(-1, Math.min(1, a + noise));
                 });
+                // Removed noisy action log
+                return noisyAction;
             }
         }
         
-        // Fallback to random actions
+        // PRIORITY 3: Fallback to random actions
         const numActions = 21; // Humanoid has 21 actuators
-        return Array.from({length: numActions}, () => (Math.random() - 0.5) * 0.4);
+        const randomAction = Array.from({length: numActions}, () => (Math.random() - 0.5) * 0.4);
+        // Removed noisy action log
+        return randomAction;
     }
     
     observationToVector(obs) {
@@ -317,6 +331,23 @@ class OptimizedOrchestrator {
             },
             id: workerId
         });
+    }
+
+    // Clear actuator controls (relax muscles)
+    clearActuatorControls(envId) {
+        const workerId = Math.floor(envId / Math.ceil(this.numEnvironments / this.numWorkers));
+        if (this.workers[workerId]) {
+            this.workers[workerId].postMessage({
+                type: 'clearActuators',
+                data: {
+                    envId: envId
+                },
+                id: workerId // Though envId is primary, workerId might be useful for worker-side logging
+            });
+            console.log(`Orchestrator: Sent clearActuators command for envId ${envId} to worker ${workerId}`);
+        } else {
+            console.error(`Orchestrator: Worker ${workerId} not found for envId ${envId} when trying to clear actuators.`);
+        }
     }
 
     // Apply force to a specific body (for interaction)

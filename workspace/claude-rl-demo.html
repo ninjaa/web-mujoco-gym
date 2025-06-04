@@ -491,6 +491,12 @@
                 <button id="debugStateBtn" class="control-button secondary" data-tooltip="Debug current state and enhanced extraction">
                     Debug State
                 </button>
+                <div style="display: inline-flex; align-items: center; margin-left: 20px; color: #74b3ff;">
+                    <label for="actionScaleSlider" style="margin-right: 10px;">CleanRL Strength:</label>
+                    <input type="range" id="actionScaleSlider" min="-1" max="0.5" step="0.05" value="0" 
+                           style="width: 200px; margin-right: 10px;">
+                    <span id="actionScaleValue" style="min-width: 100px; font-family: monospace;">1.000x</span>
+                </div>
             </div>
 
             <div class="chart-container">
@@ -539,7 +545,9 @@ Ready to generate reward function when you describe a task! 🎯
             isTraining: false,
             isDeployed: false,
             trainingChart: null,
-            cleanRLControlRunning: false
+            cleanRLControlRunning: false,
+            dragState: { active: false },
+            cleanRLActionScale: 1.0
         };
 
         // Initialize demo when DOM loads
@@ -658,6 +666,30 @@ Ready to generate reward function when you describe a task! 🎯
                 
                 // Enable the first step
                 document.getElementById('generateRewardBtn').disabled = false;
+                
+                // Set up action scale slider
+                const actionScaleSlider = document.getElementById('actionScaleSlider');
+                const actionScaleValue = document.getElementById('actionScaleValue');
+                
+                actionScaleSlider.addEventListener('input', (e) => {
+                    // Convert from log scale: 10^value (so -3 = 0.001, -2 = 0.01, -1 = 0.1, 0 = 1.0)
+                    const logValue = parseFloat(e.target.value);
+                    const scale = Math.pow(10, logValue);
+                    window.demoState.cleanRLActionScale = scale;
+                    
+                    // Update display with fixed decimal places
+                    if (scale < 0.0001) {
+                        actionScaleValue.textContent = scale.toExponential(2) + 'x';
+                    } else if (scale < 0.01) {
+                        actionScaleValue.textContent = scale.toFixed(5) + 'x';
+                    } else if (scale < 0.1) {
+                        actionScaleValue.textContent = scale.toFixed(4) + 'x';
+                    } else {
+                        actionScaleValue.textContent = scale.toFixed(3) + 'x';
+                    }
+                    
+                    console.log('CleanRL action scale set to:', scale);
+                });
 
                 function updateTrainingVisualization(robotState) {
                     // Update 2D visualization
@@ -1105,15 +1137,15 @@ Please try again with a different task description.`;
                         ctx.fillText(`Height: ${bodyPos[2].toFixed(2)}m`, 10, 20);
                         ctx.fillText(`Step: ${stepCount}`, 10, 40);
                         ctx.fillText(`Time: ${(stepCount * 0.01).toFixed(1)}s`, 10, 60);
-                        ctx.fillText(`Status: CleanRL Running`, 10, 80);
+                        ctx.fillText(`Status: Custom PPO Running`, 10, 80);
                         
                         // Update visualization
                         updateTrainingVisualization(state);
                         
                         stepCount++;
                         
-                        // Run for 500 steps (5 seconds at 100Hz)
-                        if (stepCount >= 500) {
+                        // Run for 30000 steps (5 minutes at 100Hz)
+                        if (stepCount >= 30000) {
                             clearInterval(testInterval);
                             testBtn.disabled = false;
                             status.className = 'status ready';
@@ -1160,6 +1192,14 @@ Please try again with a different task description.`;
                     };
                     
                     try {
+                        // Start the orchestrator if not already started
+                        if (!window.demoState.orchestrator.physicsInterval) {
+                            console.log('🚀 Starting orchestrator physics loop...');
+                            window.demoState.orchestrator.start();
+                        } else {
+                            console.log('✅ Orchestrator already running');
+                        }
+                        
                         // Reset environment to get fresh state
                         console.log('Forcing environment reset...');
                         await window.demoState.orchestrator.resetEnvironment(0);
@@ -1237,36 +1277,37 @@ Please try again with a different task description.`;
                             }
                             
                             const state = window.demoState.orchestrator.getEnvironmentState(0);
-                            if (!state || !state.observation) return;
                             
-                            // Simple 2D visualization on canvas
-                            ctx.fillStyle = '#1a1a1a';
-                            ctx.fillRect(0, 0, canvas.width, canvas.height);
-                            
-                            // Draw humanoid as simple stick figure
-                            const bodyPos = state.observation.bodyPos || [0, 0, 1.3];
-                            const centerX = canvas.width / 2;
-                            const centerY = canvas.height / 2;
-                            const scale = 50;
-                            
-                            // Body center
-                            const x = centerX + bodyPos[0] * scale;
-                            const y = centerY - (bodyPos[2] - 1.0) * scale;
-                            
-                            ctx.fillStyle = '#4a9eff';
-                            ctx.beginPath();
-                            ctx.arc(x, y, 8, 0, 2 * Math.PI);
-                            ctx.fill();
-                            
-                            // Height indicator
-                            ctx.fillStyle = '#74b3ff';
-                            ctx.font = '12px monospace';
-                            ctx.fillText(`Height: ${bodyPos[2].toFixed(2)}m`, 10, 20);
-                            ctx.fillText(`Step: ${stepCount}`, 10, 40);
-                            ctx.fillText(`Time: ${(stepCount * 0.01).toFixed(1)}s`, 10, 60);
-                            ctx.fillText(`Status: CleanRL Running`, 10, 80);
-                            
-                            stepCount++;
+                            if (state && state.observation) {
+                                // Simple 2D visualization on canvas
+                                ctx.fillStyle = '#1a1a1a';
+                                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                                
+                                // Draw humanoid as simple stick figure
+                                const bodyPos = state.observation.bodyPos || [0, 0, 1.3];
+                                const centerX = canvas.width / 2;
+                                const centerY = canvas.height / 2;
+                                const scale = 50;
+                                
+                                // Body center
+                                const x = centerX + bodyPos[0] * scale;
+                                const y = centerY - (bodyPos[2] - 1.0) * scale;
+                                
+                                ctx.fillStyle = '#4a9eff';
+                                ctx.beginPath();
+                                ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                                ctx.fill();
+                                
+                                // Height indicator
+                                ctx.fillStyle = '#74b3ff';
+                                ctx.font = '12px monospace';
+                                ctx.fillText(`Height: ${bodyPos[2].toFixed(2)}m`, 10, 20);
+                                ctx.fillText(`Step: ${stepCount}`, 10, 40);
+                                ctx.fillText(`Time: ${(stepCount * 0.01).toFixed(1)}s`, 10, 60);
+                                ctx.fillText(`Status: CleanRL Running`, 10, 80);
+                                
+                                stepCount++;
+                            }
                         }, 50); // 20Hz updates for visualization
                         
                         console.log('Test completed successfully! CleanRL control is now active.');
@@ -1318,6 +1359,14 @@ Please try again with a different task description.`;
                     closeModal();
                 };
                 
+                // Stop CleanRL control function
+                window.stopCleanRLControl = function() {
+                    console.log('🛑 stopCleanRLControl() called - setting cleanRLControlRunning to false');
+                    console.log('Previous state:', window.demoState.cleanRLControlRunning);
+                    window.demoState.cleanRLControlRunning = false;
+                    console.log('New state:', window.demoState.cleanRLControlRunning);
+                };
+                
                 // Continuous CleanRL control function
                 window.startCleanRLControl = async function() {
                     if (window.demoState.cleanRLControlRunning) return;
@@ -1329,56 +1378,150 @@ Please try again with a different task description.`;
                     let controlStepCount = 0;
                     
                     const controlLoop = async () => {
-                        if (!window.demoState.cleanRLControlRunning) return;
+                        if (!window.demoState.cleanRLControlRunning) {
+                            console.log('🚫 Control loop exiting - cleanRLControlRunning is false');
+                            return;
+                        }
                         
                         const state = window.demoState.orchestrator.getEnvironmentState(0);
                         
                         if (state && state.observation && window.demoState.cleanRLModel) {
+                            controlStepCount++;
                             try {
                                 // Extract 376-dimensional state using enhanced extractor
-                                const enhancedState = enhancedExtractor.extractFullState(state.observation);
+                                // For now, use the enhancedState from the observation if available
+                                const enhancedState = state.observation?.enhancedState || enhancedExtractor.extractFullState(state.observation);
                                 
-                                // Get action from CleanRL model
-                                const action = await window.demoState.cleanRLModel.getAction(enhancedState);
-                                
-                                // Apply action
-                                window.demoState.orchestrator.setAction(0, action);
-                                
-                                // Log every 100 steps
-                                if (controlStepCount % 100 === 0) {
-                                    console.log(`Control step ${controlStepCount}:`);
-                                    console.log('- Enhanced state dim:', enhancedState.length);
-                                    console.log('- Action dim:', action.length);
-                                    console.log('- Action sample:', action.slice(0, 3));
-                                    console.log('- Body height:', state.observation.bodyPos?.[2]);
+                                // Debug state extraction and falling
+                                if (controlStepCount <= 10 || (state.observation.bodyPos?.[2] < 0.5) || controlStepCount % 50 === 0) {
+                                    const height = state.observation.bodyPos?.[2] || 0;
+                                    console.log(`📊 Step ${controlStepCount}: Height=${height.toFixed(3)}m, State dim=${enhancedState ? enhancedState.length : 'NULL'}`);
+                                    
+                                    if (!enhancedState || enhancedState.length !== 376) {
+                                        console.error(`❌ INVALID STATE! Expected 376 dims, got ${enhancedState ? enhancedState.length : 'NULL'}`);
+                                        return;
+                                    }
+                                    
+                                    // Log normalized state values to debug normalization
+                                    const normalizedState = window.demoState.cleanRLModel.normalizeObservation(enhancedState);
+                                    if (controlStepCount <= 3) {
+                                        console.log(`   Raw state (first 10): [${enhancedState.slice(0,10).map(v => v.toFixed(3)).join(', ')}]`);
+                                        console.log(`   Normalized (first 10): [${normalizedState.slice(0,10).map(v => v.toFixed(3)).join(', ')}]`);
+                                    }
+                                    
+                                    if (height < 0.3) {
+                                        console.log(`⚠️ HUMANOID FALLING! Height: ${height.toFixed(3)}m`);
+                                    }
                                 }
                                 
-                                controlStepCount++;
+                                // Get action from CleanRL model (deterministic for testing)
+                                const action = await window.demoState.cleanRLModel.getAction(enhancedState, true);
+                                
+                                if (action && action.length === 17) {
+                                    // Apply action scaling from slider
+                                    const scale = window.demoState.cleanRLActionScale || 1.0;
+                                    const scaledAction = action.map(a => a * scale);
+                                    
+                                    // Map CleanRL's 17 actions to MuJoCo's 21 actuators
+                                    // CleanRL controls: abdomen(3), right_hip(3), right_knee(1), left_hip(3), left_knee(1), 
+                                    //                   right_shoulder(2), right_elbow(1), left_shoulder(2), left_elbow(1)
+                                    // MuJoCo expects: all the above PLUS right_ankle(1), left_ankle(1), right_wrist(1), left_wrist(1)
+                                    
+                                    // The mapping based on humanoid.xml actuator order:
+                                    // 0-2: abdomen_y, abdomen_z, abdomen_x
+                                    // 3-5: right_hip_x, right_hip_z, right_hip_y  
+                                    // 6: right_knee
+                                    // 7: right_ankle (PASSIVE - insert 0)
+                                    // 8-10: left_hip_x, left_hip_z, left_hip_y
+                                    // 11: left_knee
+                                    // 12: left_ankle (PASSIVE - insert 0)
+                                    // 13-14: right_shoulder1, right_shoulder2
+                                    // 15: right_elbow
+                                    // 16: right_wrist (PASSIVE - insert 0)
+                                    // 17-18: left_shoulder1, left_shoulder2
+                                    // 19: left_elbow
+                                    // 20: left_wrist (PASSIVE - insert 0)
+                                    
+                                    const fullAction = new Array(21).fill(0);
+                                    
+                                    // Map CleanRL actions to correct positions
+                                    fullAction[0] = scaledAction[0];   // abdomen_y
+                                    fullAction[1] = scaledAction[1];   // abdomen_z
+                                    fullAction[2] = scaledAction[2];   // abdomen_x
+                                    fullAction[3] = scaledAction[3];   // right_hip_x
+                                    fullAction[4] = scaledAction[4];   // right_hip_z
+                                    fullAction[5] = scaledAction[5];   // right_hip_y
+                                    fullAction[6] = scaledAction[6];   // right_knee
+                                    fullAction[7] = 0;                 // right_ankle (PASSIVE)
+                                    fullAction[8] = scaledAction[7];   // left_hip_x
+                                    fullAction[9] = scaledAction[8];   // left_hip_z
+                                    fullAction[10] = scaledAction[9];  // left_hip_y
+                                    fullAction[11] = scaledAction[10]; // left_knee
+                                    fullAction[12] = 0;                 // left_ankle (PASSIVE)
+                                    fullAction[13] = scaledAction[11]; // right_shoulder1
+                                    fullAction[14] = scaledAction[12]; // right_shoulder2
+                                    fullAction[15] = scaledAction[13]; // right_elbow
+                                    fullAction[16] = 0;                 // right_wrist (PASSIVE)
+                                    fullAction[17] = scaledAction[14]; // left_shoulder1
+                                    fullAction[18] = scaledAction[15]; // left_shoulder2
+                                    fullAction[19] = scaledAction[16]; // left_elbow
+                                    fullAction[20] = 0;                 // left_wrist (PASSIVE)
+                                    
+                                    // CleanRL uses gym.wrappers.ClipAction which clips to action space bounds
+                                    // MuJoCo humanoid has ctrlrange="-1 1" so we need to clip
+                                    const clippedFullAction = fullAction.map(a => Math.max(-1, Math.min(1, a)));
+                                    
+                                    // Debug: Log if we're mapping
+                                    if (controlStepCount <= 5) {
+                                        console.log(`📌 Action mapping: CleanRL gave ${action.length} actions, mapped to ${clippedFullAction.length} with passive joints zeroed`);
+                                    }
+                                    
+                                    // Log action strengths: frequently at first, then every 100 steps
+                                    if (controlStepCount <= 20 || controlStepCount % 100 === 0) {
+                                        // Calculate action magnitudes
+                                        const rawMagnitude = Math.sqrt(action.reduce((sum, a) => sum + a*a, 0));
+                                        const fullMagnitude = Math.sqrt(clippedFullAction.reduce((sum, a) => sum + a*a, 0));
+                                        const maxRawAction = Math.max(...action.map(Math.abs));
+                                        const maxFullAction = Math.max(...clippedFullAction.map(Math.abs));
+                                        
+                                        // Get current state for debugging
+                                        const currentState = window.demoState.orchestrator.getEnvironmentState(0);
+                                        const height = currentState?.observation?.bodyPos?.[2] || 0;
+                                        const velocity = currentState?.observation?.bodyVel || [0,0,0];
+                                        const speed = Math.sqrt(velocity[0]**2 + velocity[1]**2 + velocity[2]**2);
+                                        
+                                        console.log(`🎮 CleanRL Status (step ${controlStepCount}):`);
+                                        console.log(`   Height: ${height.toFixed(3)}m, Speed: ${speed.toFixed(3)}m/s`);
+                                        console.log(`   Raw action magnitude: ${rawMagnitude.toFixed(3)}, max: ${maxRawAction.toFixed(3)}`);
+                                        console.log(`   Full action magnitude: ${fullMagnitude.toFixed(3)}, max: ${maxFullAction.toFixed(3)}`);
+                                        console.log(`   Scale factor: ${scale.toFixed(3)}x`);
+                                        console.log(`   Raw actions (first 5): [${action.slice(0,5).map(a => a.toFixed(3)).join(', ')}]`);
+                                        console.log(`   Clipped actions (torso): [${clippedFullAction.slice(0,3).map(a => a.toFixed(3)).join(', ')}]`);
+                                    }
+                                    
+                                    window.demoState.orchestrator.setAction(0, clippedFullAction);
+                                } else {
+                                    console.error('Invalid action received:', action);
+                                }
                             } catch (error) {
                                 console.error('Error in control loop:', error);
                                 window.demoState.cleanRLControlRunning = false;
                                 return;
                             }
                         } else {
-                            if (controlStepCount % 100 === 0) {
-                                console.log('Control loop waiting - state:', !!state, 'observation:', !!state?.observation, 'model:', !!window.demoState.cleanRLModel);
-                            }
-                            controlStepCount++;
+                            // Removed noisy waiting log
                         }
                         
-                        // Continue at 100Hz
-                        setTimeout(controlLoop, 10);
+                        // Dynamic control frequency: slower during drag for visible force effects
+                        const isDragging = window.demoState?.dragState?.active || false;
+                        const controlInterval = isDragging ? 50 : 10; // 20Hz during drag, 100Hz normal
+                        // Removed noisy frequency log
+                        
+                        setTimeout(controlLoop, controlInterval);
                     };
                     
                     controlLoop();
                 };
-                
-                // Stop CleanRL control function
-                window.stopCleanRLControl = function() {
-                    console.log('Stopping CleanRL control...');
-                    window.demoState.cleanRLControlRunning = false;
-                };
-                
             } catch (error) {
                 console.error('Failed to initialize demo:', error);
             }
