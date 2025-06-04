@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MuJoCo Physics Data Test</title>
+    
+    <script src="./browser-rl.js"></script>
+    <script src="./ppo-agent.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    
+    <style>
+        body {
+            font-family: monospace;
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #0f0;
+        }
+        
+        h1 {
+            color: #4a9eff;
+        }
+        
+        .test-panel {
+            background: rgba(0, 0, 0, 0.8);
+            border: 1px solid #0f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .results {
+            background: #000;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        
+        button {
+            background: #4a9eff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        
+        button:hover {
+            background: #357abd;
+        }
+        
+        button:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+        
+        .success { color: #0f0; }
+        .error { color: #f00; }
+        .warning { color: #ff0; }
+        .info { color: #0ff; }
+        
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #333;
+            border-radius: 4px;
+        }
+        
+        .section h3 {
+            margin-top: 0;
+            color: #4a9eff;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 MuJoCo Physics Data Test</h1>
+    
+    <div class="test-panel">
+        <h2>Test Enhanced State Extraction</h2>
+        <p>This will initialize MuJoCo and test if we can extract the full 348-dimensional state vector.</p>
+        
+        <button id="runTestBtn" onclick="runPhysicsTest()">Run Physics Data Test</button>
+        
+        <div id="status" class="info">Ready to test...</div>
+        
+        <div id="results"></div>
+    </div>
+
+    <script type="module">
+        window.runPhysicsTest = async function() {
+            const { MuJoCoRLOrchestrator } = await import('./mujoco-orchestrator.js');
+            const statusEl = document.getElementById('status');
+            const resultsEl = document.getElementById('results');
+            const runBtn = document.getElementById('runTestBtn');
+            
+            runBtn.disabled = true;
+            statusEl.textContent = 'Initializing MuJoCo...';
+            statusEl.className = 'info';
+            resultsEl.innerHTML = '';
+            
+            try {
+                // Initialize MuJoCo Orchestrator
+                window.mujocoOrchestrator = new MuJoCoRLOrchestrator(1, 1, 'humanoid'); // 1 environment, 1 worker, humanoid type
+                
+                // Initialize and wait for it to complete
+                await window.mujocoOrchestrator.initialize();
+                console.log('Orchestrator initialized');
+                
+                statusEl.textContent = 'MuJoCo initialized! Running test step...';
+                
+                // Get standard observation first
+                const standardState = await window.mujocoOrchestrator.sendMessage(0, {
+                    type: 'getState',
+                    data: { envId: 0 }
+                });
+                
+                console.log('Standard state received:', standardState);
+                
+                // Step the simulation with zero actions
+                const zeroActions = new Array(21).fill(0);
+                const stepResult = await window.mujocoOrchestrator.sendMessage(0, {
+                    type: 'step',
+                    data: { 
+                        envId: 0,
+                        action: zeroActions
+                    }
+                });
+                
+                console.log('Step result:', stepResult);
+                
+                displayResults(standardState, stepResult);
+                
+            } catch (error) {
+                statusEl.textContent = 'Test failed!';
+                statusEl.className = 'error';
+                resultsEl.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+                console.error('Test error:', error);
+            } finally {
+                runBtn.disabled = false;
+            }
+        };
+        
+        function displayResults(standardState, stepResult) {
+            const statusEl = document.getElementById('status');
+            const resultsEl = document.getElementById('results');
+            
+            statusEl.textContent = 'Test completed successfully!';
+            
+            // Extract observation from the API response
+            const obs = stepResult?.observation || standardState?.observation;
+            
+            if (!obs) {
+                resultsEl.innerHTML = '<div class="error">No observation data found in response</div>';
+                return;
+            }
+            
+            statusEl.className = 'success';
+            
+            let html = '';
+            
+            // Model dimensions
+            html += '<div class="section"><h3>Model Dimensions</h3><div class="results">';
+            html += `qpos length: ${obs.qpos ? obs.qpos.length : 'N/A'}\n`;
+            html += `qvel length: ${obs.qvel ? obs.qvel.length : 'N/A'}\n`;
+            html += `xpos length: ${obs.xpos ? obs.xpos.length / 3 : 'N/A'} bodies\n`;
+            html += `xquat length: ${obs.xquat ? obs.xquat.length / 4 : 'N/A'} bodies\n`;
+            html += `actions length: ${obs.actions ? obs.actions.length : 'N/A'}\n`;
+            html += '</div></div>';
+            
+            // Standard state check
+            html += '<div class="section"><h3>Standard State (83 dimensions)</h3><div class="results">';
+            if (obs.qpos && obs.qvel) {
+                const stateDim = Math.min(obs.qpos.length, 28) + 
+                               Math.max(0, 34 - obs.qpos.length) +
+                               Math.min(obs.qvel.length, 27) + 
+                               Math.max(0, 34 - obs.qvel.length) +
+                               3 + 4 + 6 + 2; // root pos, quat, sensors, contacts
+                html += `Calculated standard state dimension: ${stateDim}\n`;
+            }
+            html += '</div></div>';
+            
+            // Enhanced state check
+            html += '<div class="section"><h3>Enhanced State (348 dimensions)</h3><div class="results">';
+            if (obs.enhancedState) {
+                html += `<span class="success">✓ Enhanced state available!</span>\n`;
+                html += `Enhanced state length: ${obs.enhancedState.length}\n`;
+                html += `First 10 values: [${obs.enhancedState.slice(0, 10).map(v => v.toFixed(3)).join(', ')}...]\n\n`;
+                
+                // Analyze components
+                let offset = 0;
+                const components = [
+                    { name: 'qpos', size: 22 },
+                    { name: 'qvel', size: 23 },
+                    { name: 'cinert', size: 130 },
+                    { name: 'cvel', size: 78 },
+                    { name: 'qfrc_actuator', size: 17 },
+                    { name: 'cfrc_ext', size: 78 }
+                ];
+                
+                html += 'Component breakdown:\n';
+                for (const comp of components) {
+                    const values = obs.enhancedState.slice(offset, offset + comp.size);
+                    const nonZero = values.filter(v => Math.abs(v) > 0.001).length;
+                    html += `  ${comp.name}: ${nonZero}/${comp.size} non-zero values`;
+                    
+                    // Show sample for important components
+                    if (comp.name === 'cfrc_ext' || comp.name === 'cvel') {
+                        const sample = values.slice(0, 6).map(v => v.toFixed(3)).join(', ');
+                        html += ` [${sample}...]`;
+                    }
+                    html += '\n';
+                    
+                    offset += comp.size;
+                }
+            } else {
+                html += '<span class="error">✗ Enhanced state NOT available</span>\n';
+            }
+            html += '</div></div>';
+            
+            // Summary
+            html += '<div class="section"><h3>Summary</h3><div class="results">';
+            const hasEnhanced = obs.enhancedState && obs.enhancedState.length === 348;
+            
+            if (hasEnhanced) {
+                html += '<span class="success">✓ Enhanced state extraction is working!</span>\n';
+                html += '<span class="success">✓ 348-dimensional state vector is available</span>\n';
+                html += '<span class="success">✓ Ready to use with pre-trained models</span>\n';
+            } else {
+                html += '<span class="warning">⚠ Enhanced state may have issues</span>\n';
+                html += '<span class="warning">⚠ Some physics data might be missing or approximated</span>\n';
+                html += '<span class="warning">⚠ Check console for errors</span>\n';
+            }
+            html += '</div></div>';
+            
+            // Raw data (truncated)
+            html += '<div class="section"><h3>Raw Observation Data (truncated)</h3><div class="results">';
+            const obsClone = {...obs};
+            // Truncate arrays for display
+            if (obsClone.enhancedState) obsClone.enhancedState = `[Array(${obs.enhancedState.length})]`;
+            if (obsClone.qpos) obsClone.qpos = `[Array(${obs.qpos.length})]`;
+            if (obsClone.qvel) obsClone.qvel = `[Array(${obs.qvel.length})]`;
+            if (obsClone.xpos) obsClone.xpos = `[Array(${obs.xpos.length})]`;
+            if (obsClone.xquat) obsClone.xquat = `[Array(${obs.xquat.length})]`;
+            html += JSON.stringify(obsClone, null, 2);
+            html += '</div></div>';
+            
+            resultsEl.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

@@ -4,8 +4,8 @@ class PPOAgent {
   constructor(
     stateDim = 83,
     actionDim = 21,
-    actorLr = 1e-4,
-    criticLr = 1e-4,
+    actorLr = 1e-3, // Increased actor learning rate
+    criticLr = 1e-3, // Increased critic learning rate
     hiddenDim = 256
   ) {
     this.stateDim = stateDim;
@@ -31,14 +31,14 @@ class PPOAgent {
     // PPO-specific hyperparameters (will be used later)
     this.gamma = 0.99; // Discount factor for future rewards
     this.lambda = 0.95; // GAE lambda for advantage estimation
-    this.clipEpsilon = 0.2; // PPO clipping parameter
-    this.epochs = 10; // Number of epochs to train on each batch
+    this.clipEpsilon = 0.1; // PPO clipping parameter (reduced from 0.2)
+    this.epochs = 5; // Reduced epochs to prevent overfitting on small batches
     this.miniBatchSize = 64; // Mini-batch size for training
     this.maxMemorySize = 2048; // Maximum memory buffer size
-    this.entropyCoef = 0.01; // Entropy bonus to encourage exploration
+    this.entropyCoef = 0.05; // Entropy bonus to encourage exploration (increased from 0.01)
     this.valueLossCoef = 0.5; // Coefficient for value loss
     this.maxGradNorm = 0.5; // Maximum gradient norm for clipping
-    this.batchSize = 64; // Batch size for training
+    this.batchSize = 20; // Further reduced for more frequent training with short episodes
 
     this.memory = []; // Buffer to store trajectories
     this.prevState = null;
@@ -52,7 +52,8 @@ class PPOAgent {
     this.episodeCount = 0;
     
     // Action smoothing parameter
-    this.actionSmoothingFactor = 0.7; // 0 = no smoothing, 1 = full smoothing
+    this.actionSmoothingFactor = 0.0; // Set to 0.0 to effectively disable smoothing
+    this.getActionCallCount = 0; // Counter for getAction logging
     
     console.log("PPOAgent initialized with TensorFlow.js and memory buffer.");
   }
@@ -78,9 +79,22 @@ class PPOAgent {
         units: 2 * this.actionDim, // mean + log_std for each action
         activation: "linear",
         kernelInitializer: 'glorotUniform',
-        biasInitializer: tf.initializers.constant({ value: -1.0 }) // Start with smaller actions
+        biasInitializer: 'zeros'  // Initialize with zeros, we'll set custom values after
       })
     );
+  
+    // Manually set the bias after creating the layer
+    const lastLayer = model.layers[model.layers.length - 1];
+    const biasValues = new Float32Array(2 * this.actionDim);
+    for (let i = 0; i < this.actionDim; i++) {
+      biasValues[i] = 0.0;  // mean biases
+      biasValues[i + this.actionDim] = -1.0;  // log_std biases
+    }
+    lastLayer.setWeights([
+      lastLayer.getWeights()[0], // Keep the kernel weights
+      tf.tensor1d(biasValues)    // Set the bias
+    ]);
+  
     return model;
   }
 
@@ -138,6 +152,8 @@ class PPOAgent {
     this._checkAndResetIfNaN();
     
     return tf.tidy(() => {
+      this.getActionCallCount++; // Increment call counter
+
       const stateTensor = tf.tensor2d([state]); // Batch size of 1
       const actorOutput = this.actor.predict(stateTensor);
 
@@ -153,14 +169,38 @@ class PPOAgent {
       const clipped_log_std = tf.clipByValue(log_std, -2, 2);
       const std = tf.exp(clipped_log_std); // std = e^(log_std)
 
+      if (this.getActionCallCount <= 5) {
+        console.log(`PPOAgent.getAction (Call #${this.getActionCallCount}): Initial Network Outputs`);
+        console.log('  Raw mean_logits:', mean_logits.arraySync()[0]);
+        console.log('  Raw log_std:', log_std.arraySync()[0]);
+        console.log('  Clipped log_std:', clipped_log_std.arraySync()[0]);
+        console.log('  Mean (after tanh):', mean.arraySync()[0]);
+        console.log('  Std (after exp):', std.arraySync()[0]);
+      }
+
       let actionTensor;
+      let sampledActionBeforeClipping;
       if (training) {
         // Manual normal distribution sampling with exploration scheduling
-        const explorationScale = Math.max(0.3, 1.0 - this.episodeCount / 100); // Decay exploration
+        let explorationScale;
+      if (this.episodeCount < 10) { // First 10 episodes
+        explorationScale = 0.1;    // Significantly reduced exploration
+      } else {
+        // Start decay after the initial low-exploration phase
+        // Adjust episode count for decay calculation: (this.episodeCount - 10)
+        // Adjust total episodes for decay: (300 - 10 = 290) to maintain a similar decay rate post-initial phase
+        explorationScale = Math.max(0.2, 1.0 - (this.episodeCount - 10) / 290);
+      }
         const noise = tf.randomNormal(mean.shape);
         actionTensor = tf.add(mean, tf.mul(tf.mul(noise, std), explorationScale));
+        sampledActionBeforeClipping = actionTensor.clone(); // Clone before final clipping for logging
       } else {
         actionTensor = mean; // Deterministic action for evaluation
+        sampledActionBeforeClipping = actionTensor.clone(); // Clone before final clipping for logging
+      }
+
+      if (this.getActionCallCount <= 5 && sampledActionBeforeClipping) {
+        console.log('  Sampled Action (before final clip):', sampledActionBeforeClipping.arraySync()[0]);
       }
 
       // Clip action to be strictly within [-1, 1] range to match tanh activation space
@@ -179,6 +219,11 @@ class PPOAgent {
 
       const actionArray = actionTensor.arraySync()[0];
       const logProbValue = logProbTensor.arraySync()[0];
+
+      if (this.getActionCallCount <= 5) {
+        console.log('  Final Action Array (after all clipping):', actionArray);
+        console.log('  Log Prob:', logProbValue);
+      }
       
       // NaN protection
       const hasNaN = actionArray.some(a => isNaN(a) || !isFinite(a));
@@ -190,18 +235,19 @@ class PPOAgent {
         };
       }
 
-      // Apply action smoothing
-      if (this.prevRawAction) {
+      // Apply action smoothing if factor > 0
+      if (this.actionSmoothingFactor > 0 && this.prevRawAction) {
         const smoothedAction = actionArray.map((a, i) => {
           return this.prevRawAction[i] * this.actionSmoothingFactor + a * (1 - this.actionSmoothingFactor);
         });
-        this.prevRawAction = smoothedAction;
+        this.prevRawAction = smoothedAction; // Store the smoothed action as the new prevRawAction
         return {
           action: smoothedAction,
           logProb: logProbValue,
         };
       } else {
-        this.prevRawAction = actionArray;
+        // If smoothing is disabled or it's the first action, use raw action
+        this.prevRawAction = actionArray; // Store the raw action as prevRawAction
         return {
           action: actionArray,
           logProb: logProbValue,
@@ -277,18 +323,21 @@ class PPOAgent {
         let done = envState.done;
         
         if (rewardFunction) {
+          let stateForReward;
           try {
             // Convert observation to state format expected by reward function
-            const stateForReward = {
+            stateForReward = {
               bodyPos: envState.observation.bodyPos || [0, 0, 0],
               bodyVel: envState.observation.bodyVel || (envState.observation.qvel ? envState.observation.qvel.slice(0, 3) : [0, 0, 0]),
               bodyQuaternion: envState.observation.xquat ? 
                 Array.from(envState.observation.xquat.slice(0, 4)) : 
                 [1, 0, 0, 0], // Default quaternion if missing
+              bodyAngVel: envState.observation.qvel ? envState.observation.qvel.slice(3, 6) : [0, 0, 0], // Angular velocity
               jointAngles: envState.observation.qpos ? envState.observation.qpos.slice(7, 28) : new Array(21).fill(0),
               jointVelocities: envState.observation.qvel ? envState.observation.qvel.slice(6, 27) : new Array(21).fill(0),
+              jointVel: envState.observation.qvel ? envState.observation.qvel.slice(6, 27) : new Array(21).fill(0), // Alias for reward function
               footContacts: [true, true], // Simplified
-              time: 0,
+              time: episodeSteps * 0.05, // Actual time based on steps (20Hz = 0.05s per step)
               prevAction: this.prevAction // Add previous action for smoothness
             };
             
@@ -342,12 +391,18 @@ class PPOAgent {
           );
 
           // Train the agent with collected experience
-          if (this.memory.length >= this.batchSize * 2) { // Wait for more data
-            console.log("Training PPO agent...");
+          console.log(`Memory buffer size: ${this.memory.length} samples`);
+          if (this.memory.length >= this.batchSize) { // Train more frequently
+            console.log(`Training PPO agent with ${this.memory.length} samples...`);
             this.train();
-            this.clearMemory();
+            // Only clear memory after training with enough samples
+            // Keep some samples for next batch to maintain continuity
+            const samplesToKeep = Math.floor(this.batchSize / 2);
+            if (this.memory.length > samplesToKeep) {
+              this.memory = this.memory.slice(-samplesToKeep);
+              console.log(`Kept ${samplesToKeep} recent samples for continuity`);
+            }
           }
-
           this.episodeCount++;
 
           resolve(totalEpisodeReward);
@@ -508,18 +563,21 @@ class PPOAgent {
     const actions = this.memory.map((mem) => mem.action);
     const advantages = this.memory.map((mem) => mem.advantage);
     const oldLogProbs = this.memory.map((mem) => mem.logProb);
+    const valueTargets = this.memory.map((mem) => mem.valueTarget);
 
     // Convert to tensors
     const stateTensor = tf.tensor2d(states);
     const actionTensor = tf.tensor2d(actions);
     const advantageTensor = tf.tensor1d(advantages);
     const oldLogProbTensor = tf.tensor1d(oldLogProbs);
+    const valueTargetTensor = tf.tensor1d(valueTargets);
 
     // Train actor and critic networks
     for (let epoch = 0; epoch < this.epochs; epoch++) {
       console.log(`Epoch ${epoch + 1} of ${this.epochs}`);
 
       // Train actor network
+      let actorLossValue = 0;
       this.actorOptimizer.minimize(() => {
         const actorOutput = this.actor.predict(stateTensor);
         
@@ -532,7 +590,7 @@ class PPOAgent {
         const std = tf.exp(log_std);
         
         // Calculate log probabilities manually for Normal distribution
-        // log_prob = -0.5 * ((action - mean) / std)^2 - log(std) - 0.5 * log(2*pi)
+        // log_prob = -0.5 * ((action - mean) / std)^2 - log(std) - 0.5 * action_dim * log(2*pi)
         const diff = tf.sub(actionTensor, mean);
         const normalizedDiff = tf.div(diff, std);
         const logProbs = tf.add(
@@ -558,15 +616,20 @@ class PPOAgent {
             tf.mul(clippedRatio, advantageTensor)
           )
         ));
+        actorLossValue = actorLoss.dataSync()[0];
         return actorLoss;
       });
 
       // Train critic network
+      let criticLossValue = 0;
       this.criticOptimizer.minimize(() => {
         const criticOutput = this.critic.predict(stateTensor);
-        const criticLoss = tf.mean(tf.square(tf.sub(criticOutput.squeeze(), advantageTensor)));
+        const criticLoss = tf.mean(tf.square(tf.sub(criticOutput.squeeze(), valueTargetTensor)));
+        criticLossValue = criticLoss.dataSync()[0];
         return criticLoss;
       });
+      
+      console.log(`  Actor Loss: ${actorLossValue}, Critic Loss: ${criticLossValue}`);
     }
 
     // Clean up tensors
@@ -574,9 +637,7 @@ class PPOAgent {
     actionTensor.dispose();
     advantageTensor.dispose();
     oldLogProbTensor.dispose();
-
-    // Clear memory buffer
-    this.clearMemory();
+    valueTargetTensor.dispose();
 
     console.log("PPO training completed.");
   }

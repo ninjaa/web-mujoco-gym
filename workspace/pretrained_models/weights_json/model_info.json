@@ -1,0 +1,21 @@
+{
+  "input_dim": 376,
+  "action_dim": 17,
+  "hidden_dim": 64,
+  "architecture": "PPO",
+  "source": "CleanRL Humanoid-v4",
+  "actor_layers": [
+    376,
+    64,
+    64,
+    17
+  ],
+  "critic_layers": [
+    376,
+    64,
+    64,
+    1
+  ],
+  "activation": "tanh",
+  "format": "json_weights"
+}

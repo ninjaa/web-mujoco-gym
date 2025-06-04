@@ -18,6 +18,8 @@
     <script src="./mujoco-orchestrator-v3.js"></script>
     <script src="./browser-rl.js"></script>
     <script src="./ppo-agent.js"></script>
+    <script src="./ppo-agent-cleanrl.js"></script>
+    <script src="./enhanced-state-extractor.js"></script>
     <script src="./claude-reward-generator.js"></script>
     <script src="./visualization-2d.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
@@ -345,6 +347,79 @@
             margin: 20px 0;
             flex-wrap: wrap;
         }
+
+        /* Three.js Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .modal-overlay.hidden {
+            display: none;
+        }
+        
+        .modal-content {
+            background: #1a1a1a;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            width: 90%;
+            max-width: 1200px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            z-index: 1001;
+        }
+        
+        .modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            color: #fff;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.2s;
+            position: relative;
+            z-index: 1002;
+        }
+        
+        .modal-close:hover {
+            opacity: 0.7;
+        }
+        
+        #threejs-container {
+            flex: 1;
+            width: 100%;
+            overflow: hidden;
+            position: relative;
+        }
     </style>
 </head>
 <body>
@@ -359,8 +434,8 @@
         <textarea 
             id="taskInput" 
             class="task-input" 
-            placeholder="Describe what you want the robots to do... (e.g., 'Make them walk forward smoothly', 'Do a silly dance', 'Stand on one leg')"
-            rows="3">Walk forward while maintaining balance</textarea>
+            placeholder="Describe what you want the robots to do... (e.g., 'Make them stand and balance', 'Do a silly dance', 'Stand on one leg')"
+            rows="3">Stand and balance</textarea>
         <div class="controls">
             <button id="generateRewardBtn" onclick="generateReward()">
                 🧠 Generate Reward Function
@@ -388,7 +463,7 @@
             </div>
             
             <div class="training-robot" id="trainingRobot">
-                <!-- Robot visualization will be rendered here -->
+                <canvas id="training-canvas" width="280" height="160" style="background: #1a1a1a; border-radius: 8px; cursor: pointer;"></canvas>
             </div>
 
             <div class="controls">
@@ -408,6 +483,14 @@
                     📁 Import Policy
                 </button>
                 <input type="file" id="policyFileInput" accept=".json" style="display: none;">
+                <button id="loadCleanRLModelBtn" onclick="loadCleanRLModel()">📁 Load CleanRL Model</button>
+                <button id="testCleanRLModelBtn" onclick="testCleanRLModel()" disabled>🎮 Test CleanRL Model</button>
+                <button id="stopCleanRLTestBtn" class="control-button secondary" style="display: none;">
+                    Stop Test
+                </button>
+                <button id="debugStateBtn" class="control-button secondary" data-tooltip="Debug current state and enhanced extraction">
+                    Debug State
+                </button>
             </div>
 
             <div class="chart-container">
@@ -451,10 +534,12 @@ Ready to generate reward function when you describe a task! 🎯
             orchestrator: null,
             claudeGenerator: null,
             rl: null,
+            cleanRLModel: null,
             currentRewardFunction: null,
             isTraining: false,
             isDeployed: false,
-            trainingChart: null
+            trainingChart: null,
+            cleanRLControlRunning: false
         };
 
         // Initialize demo when DOM loads
@@ -483,7 +568,8 @@ Ready to generate reward function when you describe a task! 🎯
                 // Initialize instances
                 window.demoState.claudeGenerator = new ClaudeRewardGenerator();
                 window.demoState.rl = new PPOAgent(83, 21); // stateDim = 83 (from grootState), actionDim = 21
-                                
+                window.demoState.cleanRLModel = new PPOAgentCleanRL(); // Initialize CleanRL model
+                
                 // Initialize orchestrator with single environment for training
                 console.log('Creating OptimizedOrchestrator...');
                 window.demoState.orchestrator = new OptimizedOrchestrator(1, 1);
@@ -714,16 +800,17 @@ Ready to generate reward function when you describe a task! 🎯
                         claudeThinking.innerHTML = `Analyzing task: "${task}"
 
 🧠 Understanding the goal...
-• Task requires humanoid locomotion
-• Need to reward forward progress
-• Should penalize falling or instability
-• Balance exploration vs exploitation
+• Task requires humanoid to stand and balance
+• Need to reward stable upright posture
+• Should penalize any movement or falling
+• Focus on stability over exploration
 
 💡 Designing reward function...
-• Positive reward for forward velocity
-• Negative reward for energy consumption  
-• Large penalty for falling (height < 0.3m)
-• Small bonus for maintaining upright posture
+• Positive reward for maintaining height
+• Positive reward for staying upright
+• Strong penalty for any movement
+• Large penalty for falling (height < 0.7m)
+• Bonus for minimal joint movement
 
 ⚡ Generating JavaScript code...<span class="thinking-cursor">|</span>`;
 
@@ -733,74 +820,59 @@ Ready to generate reward function when you describe a task! 🎯
                             const bodyVel = state.bodyVel || [0, 0, 0];
                             const bodyQuat = state.bodyQuaternion || [1, 0, 0, 0];
                             
-                            // Safety checks
-                            if (!Array.isArray(bodyPos) || bodyPos.length < 3 ||
-                                !Array.isArray(bodyVel) || bodyVel.length < 3 ||
-                                (!Array.isArray(action) && !ArrayBuffer.isView(action)) || action.length === 0) {
-                                console.warn('Invalid state or action in reward function:', {bodyPos, bodyVel, action});
-                                return 0;
+                            // STANDING AND BALANCING REWARD - focus on stability, not movement
+                            
+                            let reward = 0;
+                            const height = bodyPos[2];
+                            
+                            // 1. Height reward (0 to 0.3) - reduced to make room for other rewards
+                            if (height > 0.8) {
+                                reward += 0.3 * Math.min(1.0, (height - 0.8) / 0.5);
                             }
                             
-                            // Check for NaN values
-                            if (bodyPos.some(isNaN) || bodyVel.some(isNaN) || Array.from(action).some(isNaN)) {
-                                console.warn('NaN values detected in reward function inputs');
-                                return 0;
+                            // 2. Survival time bonus (0 to 0.2) - increases with episode progress
+                            // This encourages the agent to stay upright longer
+                            const survivalBonus = Math.min(0.2, 0.2 * (state.time || 0) / 10.0);
+                            reward += survivalBonus;
+                            
+                            // 3. Uprightness reward (0 to 0.2)
+                            if (bodyQuat[0] > 0.8) {  // w component of quaternion
+                                reward += 0.2 * Math.min(1.0, (bodyQuat[0] - 0.8) / 0.2);
                             }
                             
-                            // Base alive bonus (encourage survival)
-                            let reward = 2.0; // Reduced to make other rewards more important
-                            
-                            // Forward progress reward (primary objective)
-                            const forwardVel = bodyVel[0];
-                            if (forwardVel > 0) {
-                                reward += forwardVel * 20.0; // Even higher weight for forward motion
+                            // 4. Stability reward (0 to 0.15) - rewards low angular velocity
+                            const bodyAngVel = state.bodyAngVel || [0, 0, 0];
+                            const angVelMag = Math.sqrt(bodyAngVel[0]**2 + bodyAngVel[1]**2 + bodyAngVel[2]**2);
+                            if (angVelMag < 2.0) {
+                                reward += 0.15 * (1.0 - angVelMag / 2.0);
                             }
                             
-                            // Height maintenance (softer penalty)
-                            const targetHeight = 1.3;
-                            const heightError = Math.abs(bodyPos[2] - targetHeight);
-                            if (bodyPos[2] > 0.7) { // Lower threshold
-                                reward += Math.exp(-heightError * 1.5) * 5.0; // Bigger reward for good height
+                            // 5. Center of mass stability (0 to 0.1) - rewards staying centered
+                            const comStability = Math.exp(-2.0 * (bodyPos[0]**2 + bodyPos[1]**2));
+                            reward += 0.1 * comStability;
+                            
+                            // 6. Muscle efficiency reward (0 to 0.1)
+                            const muscleActivation = action.reduce((sum, a) => sum + Math.abs(a), 0) / action.length;
+                            if (muscleActivation < 0.5) {
+                                reward += 0.1 * (1.0 - muscleActivation / 0.5);
                             }
                             
-                            // Upright bonus (using quaternion)
-                            const uprightness = Math.max(0, bodyQuat[0]); // w component, clamp negative
-                            reward += uprightness * 4.0;
+                            // 7. STRONG penalty for ANY movement in any direction
+                            const totalVelocity = Math.sqrt(bodyVel[0]**2 + bodyVel[1]**2 + bodyVel[2]**2);
+                            const velocityPenalty = Math.min(0.2, 0.1 * totalVelocity);
+                            reward -= velocityPenalty;
                             
-                            // Smaller control penalty to allow stronger actions
-                            const controlCost = action.reduce((sum, a) => sum + a * a, 0) * 0.0005; // L2 penalty
-                            reward -= controlCost;
+                            // 8. Joint velocity penalty - penalize excessive joint movements
+                            const jointVel = state.jointVel || [];
+                            const jointVelPenalty = Math.min(0.05, 0.001 * jointVel.reduce((sum, v) => sum + v**2, 0));
+                            reward -= jointVelPenalty;
                             
-                            // Lateral movement penalty (reduced)
-                            reward -= Math.abs(bodyVel[1]) * 0.2;
+                            // 9. Small alive bonus
+                            reward += 0.05;
                             
-                            // Action smoothness bonus (if we have previous action)
-                            if (state.prevAction) {
-                                const smoothness = action.reduce((sum, a, i) => {
-                                    const diff = a - state.prevAction[i];
-                                    return sum - diff * diff * 0.01;
-                                }, 0);
-                                reward += smoothness;
-                            }
-                            
-                            // Softer termination - allow recovery
-                            if (bodyPos[2] < 0.5) {
-                                reward -= 20.0; // Much smaller penalty
-                                // Don't terminate immediately - give chance to recover
-                                if (bodyPos[2] < 0.3) {
-                                    return { reward: reward, done: true };
-                                }
-                            }
-                            
-                            // Progressive speed bonus
-                            if (forwardVel > 0.2) reward += 5.0;
-                            if (forwardVel > 0.5) reward += 10.0;
-                            if (forwardVel > 1.0) reward += 20.0;
-                            
-                            // Final safety check
-                            if (isNaN(reward) || !isFinite(reward)) {
-                                console.warn('Invalid reward calculated:', reward);
-                                return 0;
+                            // Termination with small penalty
+                            if (height < 0.7) {
+                                return { reward: -0.5, done: true };  // Reduced penalty
                             }
                             
                             return reward;
@@ -1006,6 +1078,35 @@ Please try again with a different task description.`;
                         // Apply action
                         window.demoState.orchestrator.setAction(0, action);
                         
+                        // Update 2D visualization
+                        let canvas = document.getElementById('training-canvas');
+                        let ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#1a1a1a';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        
+                        // Draw humanoid as simple stick figure
+                        const bodyPos = state.observation.bodyPos || [0, 0, 1.3];
+                        const centerX = canvas.width / 2;
+                        const centerY = canvas.height / 2;
+                        const scale = 50;
+                        
+                        // Body center
+                        const x = centerX + bodyPos[0] * scale;
+                        const y = centerY - (bodyPos[2] - 1.0) * scale;
+                        
+                        ctx.fillStyle = '#4a9eff';
+                        ctx.beginPath();
+                        ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                        ctx.fill();
+                        
+                        // Height indicator
+                        ctx.fillStyle = '#74b3ff';
+                        ctx.font = '12px monospace';
+                        ctx.fillText(`Height: ${bodyPos[2].toFixed(2)}m`, 10, 20);
+                        ctx.fillText(`Step: ${stepCount}`, 10, 40);
+                        ctx.fillText(`Time: ${(stepCount * 0.01).toFixed(1)}s`, 10, 60);
+                        ctx.fillText(`Status: CleanRL Running`, 10, 80);
+                        
                         // Update visualization
                         updateTrainingVisualization(state);
                         
@@ -1022,163 +1123,277 @@ Please try again with a different task description.`;
                     }, 10); // 100Hz updates
                 };
 
-                window.deployToFleet = async function() {
-                    const deployBtn = document.getElementById('deployBtn');
-                    const deployStatus = document.getElementById('deploymentStatus');
+                window.loadCleanRLModel = async function() {
+                    const loadBtn = document.getElementById('loadCleanRLModelBtn');
+                    const testBtn = document.getElementById('testCleanRLModelBtn');
                     
-                    deployBtn.disabled = true;
-                    deployStatus.className = 'status training';
-                    deployStatus.textContent = 'Deploying';
-
-                    // Create celebration effect
-                    createCelebration();
-
+                    loadBtn.disabled = true;
+                    
                     try {
-                        // Reinitialize orchestrator with 100 robots
-                        await window.demoState.orchestrator.terminate();
-                        window.demoState.orchestrator = new OptimizedOrchestrator(100, 8);
-                        await window.demoState.orchestrator.initialize();
-
-                        // Activate all robot dots with animation delay
-                        const robots = document.querySelectorAll('.robot-dot');
-                        robots.forEach((robot, index) => {
-                            setTimeout(() => {
-                                robot.classList.add('active');
-                            }, index * 50); // Stagger the activation
-                        });
-
-                        deployStatus.className = 'status complete';
-                        deployStatus.textContent = 'Deployed';
-                        window.demoState.isDeployed = true;
-
-                        // Start the deployed simulation
-                        window.demoState.orchestrator.start();
-
+                        // Load CleanRL model
+                        await window.demoState.cleanRLModel.loadModel();
+                        
+                        console.log('CleanRL model loaded successfully!');
+                        loadBtn.disabled = false;
+                        testBtn.disabled = false;
                     } catch (error) {
-                        console.error('Deployment failed:', error);
-                        deployBtn.disabled = false;
-                        deployStatus.className = 'status ready';
-                        deployStatus.textContent = 'Failed';
+                        console.error('Failed to load CleanRL model:', error);
+                        loadBtn.disabled = false;
                     }
                 };
 
-                function createCelebration() {
-                    const celebration = document.getElementById('celebration');
+                window.testCleanRLModel = async function() {
+                    console.log('Testing CleanRL model...');
                     
-                    for (let i = 0; i < 50; i++) {
-                        const particle = document.createElement('div');
-                        particle.className = 'particle';
-                        particle.style.left = Math.random() * 100 + '%';
-                        particle.style.top = Math.random() * 100 + '%';
-                        particle.style.backgroundColor = ['#4a9eff', '#74b3ff', '#ff6b6b', '#22c55e'][Math.floor(Math.random() * 4)];
-                        celebration.appendChild(particle);
-
-                        setTimeout(() => {
-                            particle.remove();
-                        }, 3000);
-                    }
-                }
-
-                // Export policy handler
-                document.getElementById('exportPolicyBtn').addEventListener('click', () => {
-                    if (!window.demoState.rl) {
-                        alert('No policy to export! Train a policy first.');
-                        return;
-                    }
+                    const testBtn = document.getElementById('testCleanRLModelBtn');
+                    const stopBtn = document.getElementById('stopCleanRLTestBtn');
+                    const status = document.getElementById('trainingStatus');
+                    
+                    testBtn.disabled = true;
+                    testBtn.style.display = 'none';
+                    stopBtn.style.display = 'inline-block';
+                    stopBtn.onclick = () => {
+                        window.stopCleanRLControl();
+                        testBtn.disabled = false;
+                        testBtn.style.display = 'inline-block';
+                        stopBtn.style.display = 'none';
+                    };
                     
                     try {
-                        // Export the policy weights
-                        const policyData = {
-                            type: 'PPOAgent',
-                            timestamp: new Date().toISOString(),
-                            taskDescription: document.getElementById('taskInput').value,
-                            actor: window.demoState.rl.actor.getWeights().map(w => ({
-                                data: Array.from(w.dataSync()),
-                                shape: w.shape
-                            })),
-                            critic: window.demoState.rl.critic.getWeights().map(w => ({
-                                data: Array.from(w.dataSync()),
-                                shape: w.shape
-                            })),
-                            config: {
-                                stateDim: window.demoState.rl.stateDim,
-                                actionDim: window.demoState.rl.actionDim,
-                                hiddenDim: window.demoState.rl.hiddenDim
+                        // Reset environment to get fresh state
+                        console.log('Forcing environment reset...');
+                        await window.demoState.orchestrator.resetEnvironment(0);
+                        
+                        // Wait for reset to complete and valid observation
+                        console.log('Waiting for valid state after reset...');
+                        let attempts = 0;
+                        let state;
+                        while (attempts < 50) { // Increased attempts since reset takes time
+                            state = window.demoState.orchestrator?.getEnvironmentState(0);
+                            if (state && state.observation && state.observation.bodyPos) {
+                                console.log('Found valid state after reset, attempts:', attempts);
+                                console.log('Body position:', state.observation.bodyPos);
+                                break;
                             }
-                        };
-                        
-                        // Create download link
-                        const blob = new Blob([JSON.stringify(policyData, null, 2)], {type: 'application/json'});
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `ppo-policy-${Date.now()}.json`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                        
-                        console.log('Policy exported successfully');
-                    } catch (error) {
-                        console.error('Failed to export policy:', error);
-                        alert('Failed to export policy: ' + error.message);
-                    }
-                });
-                
-                // Import policy handler
-                document.getElementById('importPolicyBtn').addEventListener('click', () => {
-                    document.getElementById('policyFileInput').click();
-                });
-                
-                document.getElementById('policyFileInput').addEventListener('change', async (e) => {
-                    const file = e.target.files[0];
-                    if (!file) return;
-                    
-                    try {
-                        const text = await file.text();
-                        const policyData = JSON.parse(text);
-                        
-                        if (policyData.type !== 'PPOAgent') {
-                            throw new Error('Invalid policy file');
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                            attempts++;
                         }
                         
-                        // Create new PPOAgent with saved config
-                        window.demoState.rl = new PPOAgent(
-                            policyData.config.stateDim,
-                            policyData.config.actionDim,
-                            policyData.config.hiddenDim
-                        );
-                        
-                        // Load actor weights
-                        const actorWeights = policyData.actor.map(w => 
-                            tf.tensor(w.data, w.shape)
-                        );
-                        window.demoState.rl.actor.setWeights(actorWeights);
-                        
-                        // Load critic weights
-                        const criticWeights = policyData.critic.map(w => 
-                            tf.tensor(w.data, w.shape)
-                        );
-                        window.demoState.rl.critic.setWeights(criticWeights);
-                        
-                        // Update task description if available
-                        if (policyData.taskDescription) {
-                            document.getElementById('taskInput').value = policyData.taskDescription;
+                        if (!state || !state.observation) {
+                            console.error('Failed to get valid state after', attempts, 'attempts');
+                            console.log('Current state:', state);
+                            return;
                         }
                         
-                        console.log('Policy imported successfully');
-                        alert('Policy imported successfully! You can now test it.');
+                        // Check if we have valid state after reset
+                        console.log('State after reset:', state);
+                        if (!state.observation) {
+                            console.error('No observation data in state');
+                            return;
+                        }
+                        
+                        // Extract enhanced state to test everything is working
+                        const enhancedExtractor = new EnhancedStateExtractor();
+                        let enhancedState;
+                        try {
+                            enhancedState = enhancedExtractor.extractFullState(state.observation);
+                            console.log('Enhanced state extracted successfully, dim:', enhancedState.length);
+                        } catch (error) {
+                            console.error('Enhanced state extraction failed:', error);
+                            status.textContent = 'State extraction failed';
+                            testBtn.disabled = false;
+                            testBtn.style.display = 'inline-block';
+                            stopBtn.style.display = 'none';
+                            return;
+                        }
+                        
+                        // Test action generation
+                        try {
+                            const testAction = await window.demoState.cleanRLModel.getAction(enhancedState);
+                            console.log('Test action generated successfully, dim:', testAction.length);
+                        } catch (error) {
+                            console.error('Action generation failed:', error);
+                            status.textContent = 'Action generation failed';
+                            testBtn.disabled = false;
+                            testBtn.style.display = 'inline-block';
+                            stopBtn.style.display = 'none';
+                            return;
+                        }
+                        
+                        status.textContent = 'CleanRL control active - click canvas for 3D view';
+                        
+                        // Start continuous control
+                        await window.startCleanRLControl();
+                        
+                        // Start 2D visualization
+                        const canvas = document.getElementById('training-canvas');
+                        const ctx = canvas.getContext('2d');
+                        let stepCount = 0;
+                        
+                        const vizInterval = setInterval(() => {
+                            if (!window.demoState.cleanRLControlRunning) {
+                                clearInterval(vizInterval);
+                                return;
+                            }
+                            
+                            const state = window.demoState.orchestrator.getEnvironmentState(0);
+                            if (!state || !state.observation) return;
+                            
+                            // Simple 2D visualization on canvas
+                            ctx.fillStyle = '#1a1a1a';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            
+                            // Draw humanoid as simple stick figure
+                            const bodyPos = state.observation.bodyPos || [0, 0, 1.3];
+                            const centerX = canvas.width / 2;
+                            const centerY = canvas.height / 2;
+                            const scale = 50;
+                            
+                            // Body center
+                            const x = centerX + bodyPos[0] * scale;
+                            const y = centerY - (bodyPos[2] - 1.0) * scale;
+                            
+                            ctx.fillStyle = '#4a9eff';
+                            ctx.beginPath();
+                            ctx.arc(x, y, 8, 0, 2 * Math.PI);
+                            ctx.fill();
+                            
+                            // Height indicator
+                            ctx.fillStyle = '#74b3ff';
+                            ctx.font = '12px monospace';
+                            ctx.fillText(`Height: ${bodyPos[2].toFixed(2)}m`, 10, 20);
+                            ctx.fillText(`Step: ${stepCount}`, 10, 40);
+                            ctx.fillText(`Time: ${(stepCount * 0.01).toFixed(1)}s`, 10, 60);
+                            ctx.fillText(`Status: CleanRL Running`, 10, 80);
+                            
+                            stepCount++;
+                        }, 50); // 20Hz updates for visualization
+                        
+                        console.log('Test completed successfully! CleanRL control is now active.');
                         
                     } catch (error) {
-                        console.error('Failed to import policy:', error);
-                        alert('Failed to import policy: ' + error.message);
+                        console.error('Failed to test CleanRL model:', error);
+                        console.error('Error stack:', error.stack);
+                        status.textContent = 'Test failed: ' + error.message;
+                        testBtn.disabled = false;
+                        testBtn.style.display = 'inline-block';
+                        stopBtn.style.display = 'none';
                     }
-                    
-                    // Reset file input
-                    e.target.value = '';
+                };
+
+                // Handle clicks on training canvas for 3D view
+                document.addEventListener('click', async (e) => {
+                    console.log('Click event:', e.target.tagName, e.target.id);
+                    if (e.target.tagName === 'CANVAS' && e.target.id === 'training-canvas') {
+                        console.log('Training canvas clicked');
+                        
+                        // Start CleanRL control if model is loaded
+                        if (window.demoState.cleanRLModel && !window.demoState.cleanRLControlRunning) {
+                            console.log('Starting CleanRL control before 3D view...');
+                            await window.startCleanRLControl();
+                            
+                            // Wait for control to stabilize
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+                        
+                        // Import and use the openEnvironment3D function
+                        try {
+                            console.log('About to import threejs-modal.js...');
+                            const { openEnvironment3D } = await import('./threejs-modal.js');
+                            console.log('Import successful');
+                            console.log('Calling openEnvironment3D...');
+                            const currentState = window.demoState.orchestrator?.getEnvironmentState(0);
+                            await openEnvironment3D(0, currentState);
+                            console.log('openEnvironment3D completed');
+                        } catch (error) {
+                            console.error('Failed to open 3D view:', error);
+                            console.error('Error stack:', error.stack);
+                        }
+                    }
                 });
+
+                // Global close function for the modal X button
+                window.closeModal = async () => {
+                    const { closeModal } = await import('./threejs-modal.js');
+                    closeModal();
+                };
+                
+                // Continuous CleanRL control function
+                window.startCleanRLControl = async function() {
+                    if (window.demoState.cleanRLControlRunning) return;
+                    
+                    console.log('Starting continuous CleanRL control...');
+                    window.demoState.cleanRLControlRunning = true;
+                    
+                    const enhancedExtractor = new EnhancedStateExtractor();
+                    let controlStepCount = 0;
+                    
+                    const controlLoop = async () => {
+                        if (!window.demoState.cleanRLControlRunning) return;
+                        
+                        const state = window.demoState.orchestrator.getEnvironmentState(0);
+                        
+                        if (state && state.observation && window.demoState.cleanRLModel) {
+                            try {
+                                // Extract 376-dimensional state using enhanced extractor
+                                const enhancedState = enhancedExtractor.extractFullState(state.observation);
+                                
+                                // Get action from CleanRL model
+                                const action = await window.demoState.cleanRLModel.getAction(enhancedState);
+                                
+                                // Apply action
+                                window.demoState.orchestrator.setAction(0, action);
+                                
+                                // Log every 100 steps
+                                if (controlStepCount % 100 === 0) {
+                                    console.log(`Control step ${controlStepCount}:`);
+                                    console.log('- Enhanced state dim:', enhancedState.length);
+                                    console.log('- Action dim:', action.length);
+                                    console.log('- Action sample:', action.slice(0, 3));
+                                    console.log('- Body height:', state.observation.bodyPos?.[2]);
+                                }
+                                
+                                controlStepCount++;
+                            } catch (error) {
+                                console.error('Error in control loop:', error);
+                                window.demoState.cleanRLControlRunning = false;
+                                return;
+                            }
+                        } else {
+                            if (controlStepCount % 100 === 0) {
+                                console.log('Control loop waiting - state:', !!state, 'observation:', !!state?.observation, 'model:', !!window.demoState.cleanRLModel);
+                            }
+                            controlStepCount++;
+                        }
+                        
+                        // Continue at 100Hz
+                        setTimeout(controlLoop, 10);
+                    };
+                    
+                    controlLoop();
+                };
+                
+                // Stop CleanRL control function
+                window.stopCleanRLControl = function() {
+                    console.log('Stopping CleanRL control...');
+                    window.demoState.cleanRLControlRunning = false;
+                };
+                
             } catch (error) {
                 console.error('Failed to initialize demo:', error);
             }
         }
     </script>
+    
+    <!-- Three.js Modal (hidden by default) -->
+    <div id="threejs-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Environment 3D View</h3>
+                <button class="modal-close" onclick="closeModal()">×</button>
+            </div>
+            <div id="threejs-container"></div>
+        </div>
+    </div>
 </body>
 </html>

@@ -1,14 +1,19 @@
 // MuJoCo RL Worker - Runs physics simulation in a Web Worker
 
 // Import MuJoCo WASM module
+importScripts('./enhanced-state-extractor.js');
+
 let mujoco = null;
 let model = null;
-let state = null;
+let state = null;  
 let simulation = null;
 let envConfig = null;
 let envState = null;
 let modelConfig = null;
 let dragState = null; // Store current drag state
+let modelLoaded = false;
+let currentRewardFunction = null;
+let enhancedExtractor = null; // Enhanced state extractor instance
 
 // Initialize MuJoCo when worker starts
 self.onmessage = async function(e) {
@@ -121,6 +126,8 @@ async function initializeMuJoCo(config, id) {
             model = new mujoco.Model(modelPath);
             state = new mujoco.State(model);
             simulation = new mujoco.Simulation(model, state);
+            // Initialize enhanced state extractor
+            enhancedExtractor = new EnhancedStateExtractor();
         } catch (error) {
             throw new Error(`Failed to create simulation: ${error.message}`);
         }
@@ -394,6 +401,16 @@ function getObservation() {
         qvel.push(simulation.qvel[i]);
     }
     
+    // Extract enhanced state if extractor is available
+    let enhancedState = null;
+    if (enhancedExtractor) {
+        try {
+            enhancedState = enhancedExtractor.extractFullState(simulation, model, false);
+        } catch (e) {
+            console.error('Failed to extract enhanced state:', e);
+        }
+    }
+    
     // For visualization, we mainly care about the torso position
     return {
         bodyPos: bodyPos,  
@@ -402,7 +419,9 @@ function getObservation() {
         xpos: xpos,    // All body positions
         xquat: xquat,  // All body rotations
         time: simulation.time,
-        actions: simulation.ctrl ? Array.from(simulation.ctrl).slice(0, model.nu) : []  
+        actions: simulation.ctrl ? Array.from(simulation.ctrl).slice(0, model.nu) : [],
+        // Add enhanced state for PPO training
+        enhancedState: enhancedState
     };
 }
 

@@ -205,6 +205,19 @@ class OptimizedOrchestrator {
                 done: data.done,
                 info: data.info
             });
+        } else if (type === 'reset') {
+            // Handle reset messages - update the environment state immediately
+            const state = this.environmentStates.get(data.envId);
+            if (state) {
+                state.observation = data.observation;
+                state.reward = 0;
+                state.done = false;
+                state.info = {};
+                state.episodeReward = 0;
+                state.episodeLength = 0;
+                state.lastUpdate = Date.now();
+                console.log(`Environment ${data.envId} reset, observation received:`, !!data.observation);
+            }
         }
     }
     
@@ -293,6 +306,32 @@ class OptimizedOrchestrator {
         if (state) {
             state.nextAction = action;
         }
+    }
+    
+    resetEnvironment(envId) {
+        const workerId = Math.floor(envId / Math.ceil(this.numEnvironments / this.numWorkers));
+        this.workers[workerId].postMessage({
+            type: 'reset',
+            data: {
+                envId: envId
+            },
+            id: workerId
+        });
+    }
+
+    // Apply force to a specific body (for interaction)
+    applyForce(envId, bodyId, force, point) {
+        const workerId = Math.floor(envId / Math.ceil(this.numEnvironments / this.numWorkers));
+        this.workers[workerId].postMessage({
+            type: 'applyForce',
+            data: {
+                envId: envId,
+                bodyId: bodyId,
+                force: force,
+                point: point
+            },
+            id: workerId
+        });
     }
     
     // Clean up

@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🤖 Test CleanRL PPO Model</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .section {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .button {
+            background: linear-gradient(45deg, #ff6b6b, #ff8e53);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        .button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        
+        .status.success {
+            background: rgba(76, 175, 80, 0.3);
+            border: 1px solid #4CAF50;
+        }
+        
+        .status.error {
+            background: rgba(244, 67, 54, 0.3);
+            border: 1px solid #f44336;
+        }
+        
+        .status.info {
+            background: rgba(33, 150, 243, 0.3);
+            border: 1px solid #2196F3;
+        }
+        
+        .results {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        
+        .metric {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 5px 10px;
+            margin: 5px;
+            border-radius: 15px;
+            font-size: 14px;
+        }
+        
+        #console {
+            background: rgba(0, 0, 0, 0.5);
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 CleanRL PPO Model Test</h1>
+        <p>Test loading and inference with the converted CleanRL Humanoid-v4 model</p>
+        
+        <div class="section">
+            <h3>Model Loading</h3>
+            <button id="loadModelBtn" class="button">Load CleanRL Model</button>
+            <button id="testInferenceBtn" class="button" disabled>Test Inference</button>
+            <button id="testWithMujocoBtn" class="button" disabled>Test with MuJoCo State</button>
+            <div id="modelStatus"></div>
+        </div>
+        
+        <div class="section">
+            <h3>Model Information</h3>
+            <div id="modelInfo">Model not loaded</div>
+        </div>
+        
+        <div class="section">
+            <h3>Inference Results</h3>
+            <div id="inferenceResults">No inference performed yet</div>
+        </div>
+        
+        <div class="section">
+            <h3>Console Log</h3>
+            <div id="console"></div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="ppo-agent-cleanrl.js"></script>
+    <script>
+        let agent = null;
+        let originalConsoleLog = console.log;
+        let originalConsoleError = console.error;
+        
+        // Capture console output
+        const consoleDiv = document.getElementById('console');
+        function addToConsole(message, type = 'log') {
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#ff6b6b' : type === 'warn' ? '#ffa726' : '#00ff00';
+            consoleDiv.innerHTML += `<span style="color: ${color}">[${timestamp}] ${message}</span>\n`;
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+        }
+        
+        console.log = function(...args) {
+            originalConsoleLog.apply(console, args);
+            addToConsole(args.join(' '), 'log');
+        };
+        
+        console.error = function(...args) {
+            originalConsoleError.apply(console, args);
+            addToConsole(args.join(' '), 'error');
+        };
+        
+        console.warn = function(...args) {
+            originalConsoleError.apply(console, args);
+            addToConsole(args.join(' '), 'warn');
+        };
+        
+        function updateStatus(element, message, type) {
+            element.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+        
+        function formatNumber(num) {
+            return typeof num === 'number' ? num.toFixed(4) : num;
+        }
+        
+        // Load CleanRL model
+        document.getElementById('loadModelBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('loadModelBtn');
+            const status = document.getElementById('modelStatus');
+            const info = document.getElementById('modelInfo');
+            
+            btn.disabled = true;
+            btn.textContent = 'Loading...';
+            updateStatus(status, 'Loading CleanRL model...', 'info');
+            
+            try {
+                agent = new PPOAgentCleanRL();
+                const success = await agent.loadModel();
+                
+                if (success) {
+                    updateStatus(status, '✅ Model loaded successfully!', 'success');
+                    
+                    // Update model info
+                    const summary = agent.getSummary();
+                    info.innerHTML = `
+                        <div class="metric">State Dim: ${summary.stateDim}</div>
+                        <div class="metric">Action Dim: ${summary.actionDim}</div>
+                        <div class="metric">Hidden Dim: ${summary.hiddenDim}</div>
+                        <div class="metric">Actor Params: ${summary.actorParams}</div>
+                        <div class="metric">Critic Params: ${summary.criticParams}</div>
+                    `;
+                    
+                    document.getElementById('testInferenceBtn').disabled = false;
+                    document.getElementById('testWithMujocoBtn').disabled = false;
+                    btn.textContent = 'Model Loaded ✓';
+                } else {
+                    updateStatus(status, '❌ Failed to load model', 'error');
+                    btn.disabled = false;
+                    btn.textContent = 'Load CleanRL Model';
+                }
+                
+            } catch (error) {
+                updateStatus(status, `❌ Error: ${error.message}`, 'error');
+                btn.disabled = false;
+                btn.textContent = 'Load CleanRL Model';
+            }
+        });
+        
+        // Test inference with random state
+        document.getElementById('testInferenceBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('testInferenceBtn');
+            const results = document.getElementById('inferenceResults');
+            
+            btn.disabled = true;
+            btn.textContent = 'Testing...';
+            
+            try {
+                // Create test state (376 dimensions)
+                const testState = new Array(376).fill(0);
+                testState[2] = 1.28; // z position (humanoid height)
+                testState[3] = 1.0;  // quaternion w
+                
+                // Add some random noise to joints
+                for (let i = 7; i < 28; i++) {
+                    testState[i] = (Math.random() - 0.5) * 0.1;
+                }
+                
+                console.log('Testing with random state...');
+                
+                // Get deterministic action
+                const detAction = await agent.getAction(testState, true);
+                const value = await agent.getValue(testState);
+                
+                // Get stochastic action
+                const stochAction = await agent.getAction(testState, false);
+                
+                results.innerHTML = `
+                    <div class="results">
+Test State (first 10): [${testState.slice(0, 10).map(formatNumber).join(', ')}...]
+
+Deterministic Action: [${detAction.map(formatNumber).join(', ')}]
+
+Stochastic Action: [${stochAction.map(formatNumber).join(', ')}]
+
+Value Estimate: ${formatNumber(value)}
+
+Action Range: [${formatNumber(Math.min(...detAction))}, ${formatNumber(Math.max(...detAction))}]
+Action Mean: ${formatNumber(detAction.reduce((a, b) => a + b) / detAction.length)}
+                    </div>
+                `;
+                
+                console.log('✓ Inference test completed');
+                
+            } catch (error) {
+                results.innerHTML = `<div class="results">❌ Inference failed: ${error.message}</div>`;
+                console.error('Inference test failed:', error);
+            }
+            
+            btn.disabled = false;
+            btn.textContent = 'Test Inference';
+        });
+        
+        // Test with real MuJoCo state
+        document.getElementById('testWithMujocoBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('testWithMujocoBtn');
+            const results = document.getElementById('inferenceResults');
+            
+            btn.disabled = true;
+            btn.textContent = 'Testing with MuJoCo...';
+            
+            try {
+                // This would typically come from the MuJoCo simulation
+                console.log('Testing with MuJoCo-like state...');
+                
+                // Create a more realistic humanoid state
+                const mujocoState = new Array(376).fill(0);
+                
+                // qpos (28 elements)
+                mujocoState[0] = 0.0;    // x
+                mujocoState[1] = 0.0;    // y  
+                mujocoState[2] = 1.282;  // z (standing height)
+                mujocoState[3] = 1.0;    // quat w
+                mujocoState[4] = 0.0;    // quat x
+                mujocoState[5] = 0.0;    // quat y
+                mujocoState[6] = 0.0;    // quat z
+                
+                // Small random joint angles
+                for (let i = 7; i < 28; i++) {
+                    mujocoState[i] = (Math.random() - 0.5) * 0.2;
+                }
+                
+                // qvel (23 elements) - small velocities
+                for (let i = 28; i < 51; i++) {
+                    mujocoState[i] = (Math.random() - 0.5) * 0.1;
+                }
+                
+                // cinert (130 elements) - realistic mass/inertia values
+                for (let i = 51; i < 181; i++) {
+                    if (i % 10 === 0) mujocoState[i] = 1.0 + Math.random() * 5; // masses
+                    else mujocoState[i] = Math.random() * 0.1; // inertias
+                }
+                
+                // Get actions and value
+                const action = await agent.getAction(mujocoState, false);
+                const value = await agent.getValue(mujocoState);
+                
+                results.innerHTML = `
+                    <div class="results">
+MuJoCo State Summary:
+  Position (x,y,z): [${mujocoState.slice(0, 3).map(formatNumber).join(', ')}]
+  Quaternion: [${mujocoState.slice(3, 7).map(formatNumber).join(', ')}]
+  Joint angles (sample): [${mujocoState.slice(7, 12).map(formatNumber).join(', ')}...]
+
+PPO Action: [${action.map(formatNumber).join(', ')}]
+
+Value Estimate: ${formatNumber(value)}
+
+Action Statistics:
+  Range: [${formatNumber(Math.min(...action))}, ${formatNumber(Math.max(...action))}]
+  Mean: ${formatNumber(action.reduce((a, b) => a + b) / action.length)}
+  Std: ${formatNumber(Math.sqrt(action.reduce((a, b) => a + (b - action.reduce((x, y) => x + y) / action.length) ** 2, 0) / action.length))}
+                    </div>
+                `;
+                
+                console.log('✓ MuJoCo inference test completed');
+                
+            } catch (error) {
+                results.innerHTML = `<div class="results">❌ MuJoCo test failed: ${error.message}</div>`;
+                console.error('MuJoCo test failed:', error);
+            }
+            
+            btn.disabled = false;
+            btn.textContent = 'Test with MuJoCo State';
+        });
+        
+        // Initialize
+        console.log('CleanRL PPO model test page loaded');
+        console.log('Ready to load and test the converted model');
+    </script>
+</body>
+</html>

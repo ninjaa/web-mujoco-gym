@@ -62,13 +62,13 @@ export async function openEnvironment3D(envId, state) {
 
   // Clean up any existing animation/render state before starting
   if (animationId) {
-    console.log("⚠️ Found existing animationId:", animationId, "- cleaning up first");
+    console.log(" Found existing animationId:", animationId, "- cleaning up first");
     cancelAnimationFrame(animationId);
     animationId = null;
   }
   
   if (updateInterval) {
-    console.log("⚠️ Found existing updateInterval - cleaning up first");
+    console.log(" Found existing updateInterval - cleaning up first");
     clearInterval(updateInterval);
     updateInterval = null;
   }
@@ -112,7 +112,7 @@ export async function openEnvironment3D(envId, state) {
         // Use relative path that's served by the web server
         modelData = await parser.loadFromXML("/workspace/humanoid.xml");
         console.log(
-          "✅ Model data loaded successfully! Bodies:",
+          " Model data loaded successfully! Bodies:",
           modelData.bodies.length,
           "Materials:",
           Object.keys(modelData.materials)
@@ -124,7 +124,7 @@ export async function openEnvironment3D(envId, state) {
           throw new Error("No bodies found in model data");
         }
       } catch (error) {
-        console.error("❌ Failed to load MuJoCo model:", error);
+        console.error(" Failed to load MuJoCo model:", error);
         throw error; // Just fail instead of falling back
       }
     }
@@ -141,15 +141,21 @@ export async function openEnvironment3D(envId, state) {
       // Start updating state from orchestrator
       console.log("Setting up update interval for env", envId);
       updateInterval = setInterval(async () => {
-        if (window.mujocoOrchestrator) {
-          const newState = window.mujocoOrchestrator.getEnvironmentState(envId);
+        console.log("Update interval tick - checking orchestrator...");
+        if (window.demoState?.orchestrator) {
+          const newState = window.demoState.orchestrator.getEnvironmentState(envId);
           if (newState) {
+            console.log("Got new state, calling updateRobotPose...");
             updateRobotPose(newState);
+          } else {
+            console.log("No new state available");
           }
+        } else {
+          console.log("No orchestrator available");
         }
       }, 50); // Update at 20Hz
       
-      console.log("✅ Everything initialized. animationId:", animationId, "updateInterval:", updateInterval);
+      console.log(" Everything initialized. animationId:", animationId, "updateInterval:", updateInterval);
     } catch (error) {
       console.error("Failed somewhere in initialization:", error);
       console.error("Error stack:", error.stack);
@@ -608,8 +614,16 @@ function updateRobotPose(state) {
   }
 
   // Get body positions and rotations from physics
-  const envState = window.mujocoOrchestrator?.getEnvironmentState(currentEnvId);
-  if (!envState) return;
+  const envState = window.demoState?.orchestrator?.getEnvironmentState(currentEnvId);
+  if (!envState) {
+    console.log("No envState available");
+    return;
+  }
+
+  // Debug: Check what observation data we have
+  console.log("Observation keys:", Object.keys(envState.observation));
+  console.log("Has xpos:", !!envState.observation.xpos);
+  console.log("Has xquat:", !!envState.observation.xquat);
 
   // Check if we have access to MuJoCo xpos and xquat data
   if (
@@ -617,6 +631,7 @@ function updateRobotPose(state) {
     envState.observation.xpos &&
     envState.observation.xquat
   ) {
+    console.log("Using full body physics data");
     // Update each body's position and rotation
     if (robotGroup.bodyMap) {
       for (let bodyName in robotGroup.bodyMap) {
@@ -658,6 +673,7 @@ function updateRobotPose(state) {
       }
     }
   } else {
+    console.log("Using fallback position update");
     // Fallback to simple position update if full body data not available
     if (state.observation.bodyPos) {
       console.log("Updating robot position:", state.observation.bodyPos);
@@ -699,7 +715,7 @@ function animate(state) {
     dragStateManager.update();
     
     const dragged = dragStateManager.physicsObject;
-    if (dragged && dragged.bodyID && window.mujocoOrchestrator) {
+    if (dragged && dragged.bodyID && window.demoState?.orchestrator) {
       // Calculate force vector
       const force = dragStateManager.currentWorld.clone()
         .sub(dragStateManager.worldHit)
@@ -710,10 +726,12 @@ function animate(state) {
       const mjPoint = threeToMujocoPosition(dragStateManager.worldHit);
       
       // Send force to physics simulation
-      window.mujocoOrchestrator.applyForce(currentEnvId, dragged.bodyID, mjForce, mjPoint);
+      window.demoState.orchestrator.applyForce(currentEnvId, dragged.bodyID, mjForce, mjPoint);
     } else if (dragStateManager.lastDraggedBody && !dragged) {
       // Drag ended, clear forces
-      window.mujocoOrchestrator.applyForce(currentEnvId, dragStateManager.lastDraggedBody, [0, 0, 0], [0, 0, 0]);
+      if (window.demoState?.orchestrator) {
+        window.demoState.orchestrator.applyForce(currentEnvId, dragStateManager.lastDraggedBody, [0, 0, 0], [0, 0, 0]);
+      }
       dragStateManager.lastDraggedBody = null;
     }
     
@@ -809,5 +827,5 @@ export function closeModal() {
   // Hide modal
   document.getElementById("threejs-modal").classList.add("hidden");
   
-  console.log("✅ Modal cleanup complete");
+  console.log(" Modal cleanup complete");
 }

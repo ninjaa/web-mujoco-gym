@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MuJoCo Humanoid Pose Demo</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #1a1a1a;
+      color: #e0e0e0;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    h1 {
+      text-align: center;
+      color: #fff;
+      margin-bottom: 30px;
+    }
+    
+    .control-panel {
+      background: #2a2a2a;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    }
+    
+    .pose-buttons {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+    
+    .pose-btn {
+      padding: 10px 20px;
+      background: #4a5568;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.3s;
+    }
+    
+    .pose-btn:hover {
+      background: #5a6578;
+      transform: translateY(-2px);
+    }
+    
+    .pose-btn.active {
+      background: #3182ce;
+    }
+    
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 20px;
+    }
+    
+    .stat-card {
+      background: #374151;
+      padding: 15px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    
+    .stat-value {
+      font-size: 24px;
+      font-weight: bold;
+      color: #60a5fa;
+    }
+    
+    .stat-label {
+      font-size: 12px;
+      color: #9ca3af;
+      text-transform: uppercase;
+      margin-top: 5px;
+    }
+    
+    .mode-switch {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    
+    .mode-btn {
+      padding: 8px 16px;
+      background: #374151;
+      border: 2px solid transparent;
+      border-radius: 6px;
+      color: white;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .mode-btn.active {
+      border-color: #3182ce;
+      background: #1f2937;
+    }
+    
+    #canvas-container {
+      position: relative;
+      width: 100%;
+      height: 600px;
+      background: #111;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    
+    canvas {
+      width: 100%;
+      height: 100%;
+    }
+    
+    .loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 18px;
+      color: #60a5fa;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🤖 MuJoCo Humanoid Pose Controller</h1>
+    
+    <div class="control-panel">
+      <h3>Control Mode</h3>
+      <div class="mode-switch">
+        <button class="mode-btn active" data-mode="direct">Direct Control</button>
+        <button class="mode-btn" data-mode="learning">PPO Learning</button>
+        <button class="mode-btn" data-mode="hybrid">Hybrid (PPO + Pose)</button>
+      </div>
+      
+      <h3>Target Pose</h3>
+      <div class="pose-buttons">
+        <button class="pose-btn active" data-pose="stand">Stand</button>
+        <button class="pose-btn" data-pose="t-pose">T-Pose</button>
+        <button class="pose-btn" data-pose="arms-up">Arms Up</button>
+        <button class="pose-btn" data-pose="warrior-1">Warrior I</button>
+        <button class="pose-btn" data-pose="squat">Squat</button>
+        <button class="pose-btn" data-pose="tree-pose">Tree Pose</button>
+      </div>
+      
+      <div class="stats">
+        <div class="stat-card">
+          <div class="stat-value" id="pose-error">0.00</div>
+          <div class="stat-label">Pose Error</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="height">0.00</div>
+          <div class="stat-label">Height (m)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="episode-time">0.0</div>
+          <div class="stat-label">Time (s)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="reward">0.00</div>
+          <div class="stat-label">Reward</div>
+        </div>
+      </div>
+    </div>
+    
+    <div id="canvas-container">
+      <div class="loading">Loading MuJoCo...</div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="threejs-modal.js"></script>
+  <script src="pose-controller.js"></script>
+  <script src="ppo-agent.js"></script>
+  <script src="mujoco-env-orchestrator.js"></script>
+  
+  <script>
+    let orchestrator;
+    let poseController;
+    let ppoAgent;
+    let currentMode = 'direct';
+    let currentPose = 'stand';
+    let episodeSteps = 0;
+    let episodeStartTime = Date.now();
+    
+    // Initialize systems
+    async function init() {
+      // Initialize pose controller
+      poseController = new PoseController();
+      
+      // Initialize PPO agent (optional, for hybrid mode)
+      ppoAgent = new PPOAgent({
+        stateDim: 83,
+        actionDim: 17,
+        learningRate: 1e-3,
+        gamma: 0.99,
+        lambda: 0.95,
+        clipEpsilon: 0.1,
+        epochs: 5,
+        batchSize: 32,
+        entropyCoef: 0.05
+      });
+      
+      // Initialize MuJoCo orchestrator
+      orchestrator = new MujocoEnvOrchestrator({
+        numWorkers: 1,
+        modelPath: '/Users/ad_p_/Projects/mujoco/mjcf/humanoid/humanoid.xml',
+        modelName: 'humanoid'
+      });
+      
+      await orchestrator.init();
+      
+      // Set up UI event handlers
+      setupUI();
+      
+      // Start control loop
+      runControlLoop();
+    }
+    
+    function setupUI() {
+      // Mode switches
+      document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          currentMode = btn.dataset.mode;
+          console.log('Switched to mode:', currentMode);
+        });
+      });
+      
+      // Pose buttons
+      document.querySelectorAll('.pose-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.pose-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          currentPose = btn.dataset.pose;
+          console.log('Target pose:', currentPose);
+        });
+      });
+    }
+    
+    async function runControlLoop() {
+      // Reset environment
+      const resetResult = await orchestrator.reset();
+      let state = resetResult.observation;
+      episodeSteps = 0;
+      episodeStartTime = Date.now();
+      
+      const controlInterval = setInterval(async () => {
+        if (!state) return;
+        
+        // Get state vector for neural network
+        const stateVector = extractStateVector(state);
+        
+        // Get action based on current mode
+        let action;
+        switch (currentMode) {
+          case 'direct':
+            // Pure pose controller
+            action = poseController.getAction(stateVector, currentPose);
+            break;
+            
+          case 'learning':
+            // Pure PPO
+            const ppoResult = ppoAgent.getAction(stateVector);
+            action = ppoResult.action;
+            break;
+            
+          case 'hybrid':
+            // PPO as base policy + pose corrections
+            action = poseController.getAction(stateVector, currentPose, ppoAgent);
+            break;
+            
+          default:
+            action = new Array(17).fill(0);
+        }
+        
+        // Step environment
+        const stepResult = await orchestrator.step(action);
+        
+        if (stepResult.done) {
+          // Episode ended, reset
+          console.log('Episode ended after', episodeSteps, 'steps');
+          const resetResult = await orchestrator.reset();
+          state = resetResult.observation;
+          episodeSteps = 0;
+          episodeStartTime = Date.now();
+        } else {
+          state = stepResult.observation;
+          episodeSteps++;
+          
+          // Update UI stats
+          updateStats(state, stepResult.reward);
+        }
+      }, 50); // 20Hz control
+    }
+    
+    function extractStateVector(obs) {
+      // Convert observation to state vector format expected by networks
+      // This should match PPOAgent.extractState
+      const state = [];
+      
+      // Add qpos (joint positions)
+      if (obs.qpos) {
+        state.push(...obs.qpos.slice(0, 28));
+        // Pad to 34 if needed
+        while (state.length < 34) state.push(0);
+      }
+      
+      // Add qvel (joint velocities) 
+      if (obs.qvel) {
+        state.push(...obs.qvel.slice(0, 27));
+        // Pad to 34 if needed
+        while (state.length < 68) state.push(0);
+      }
+      
+      // Add body position
+      state.push(...(obs.bodyPos || [0, 0, 0]));
+      
+      // Add body quaternion
+      if (obs.xquat && obs.xquat.length >= 4) {
+        state.push(...obs.xquat.slice(0, 4));
+      } else {
+        state.push(1, 0, 0, 0);
+      }
+      
+      // Add placeholder sensors and contacts
+      state.push(...new Array(6).fill(0)); // sensors
+      state.push(...new Array(2).fill(0)); // contacts
+      
+      return state;
+    }
+    
+    function updateStats(state, reward) {
+      // Update height
+      const height = state.bodyPos ? state.bodyPos[2] : 0;
+      document.getElementById('height').textContent = height.toFixed(2);
+      
+      // Update time
+      const elapsedTime = (Date.now() - episodeStartTime) / 1000;
+      document.getElementById('episode-time').textContent = elapsedTime.toFixed(1);
+      
+      // Update reward
+      document.getElementById('reward').textContent = (reward || 0).toFixed(2);
+      
+      // Calculate pose error (simplified)
+      // In real implementation, would compare current joint angles to target
+      const poseError = Math.random() * 0.5; // Placeholder
+      document.getElementById('pose-error').textContent = poseError.toFixed(2);
+    }
+    
+    // Start everything
+    init().catch(console.error);
+  </script>
+</body>
+</html>
